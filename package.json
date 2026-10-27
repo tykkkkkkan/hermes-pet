@@ -1,0 +1,14 @@
+{
+  "name": "hermes-pet",
+  "version": "0.1.0",
+  "description": "Hermes 桌宠 —— 透明置顶的二次元执事小人",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "author": "汤伊轲",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^45.0.0"
+  }
+}

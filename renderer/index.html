@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>Hermes 桌宠</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="stage">
+    <div id="bubble" class="hidden"></div>
+    <button id="state-pill" title="查看 Hermes 状态"><span id="state-dot"></span><span id="state-text">Hermes 离线</span></button>
+    <div id="status-panel" class="hidden">
+      <div class="panel-title">Hermes 状态</div>
+      <div id="panel-online">离线</div>
+      <div id="panel-emotion">平静 · 大哥</div>
+      <div class="panel-grid">
+        <span>执行中 <b id="panel-running">0</b></span>
+        <span>待验收 <b id="panel-review">0</b></span>
+        <span>受阻 <b id="panel-blocked">0</b></span>
+        <span>排队 <b id="panel-queue">0</b></span>
+      </div>
+      <div id="panel-task"></div>
+      <div id="panel-agents"></div>
+    </div>
+    <img id="pet" src="../assets/hermes-chibi.png" alt="Hermes" draggable="false" />
+    <div id="menu" class="hidden">
+      <div class="mi emphasis" data-act="chat">打开对话</div>
+      <div class="mi" data-act="talk">说句话</div>
+      <div class="mi" data-act="snap">回到右下角</div>
+      <div class="mi" data-act="top">切换置顶</div>
+      <div class="mi" data-act="autostart">开机自启（开关）</div>
+      <div class="mi" data-act="dir">打开 Hermes 目录</div>
+      <div class="mi" data-act="hide">安静一会儿</div>
+      <div class="sep"></div>
+      <div class="mi danger" data-act="quit">退出</div>
+    </div>
+  </div>
+  <script src="pet.js"></script>
+</body>
+</html>

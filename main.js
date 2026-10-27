@@ -1,0 +1,561 @@
+const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, shell, globalShortcut, safeStorage, Notification } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const hermesBridge = require('./hermes-bridge');
+
+const WIN_W = 260;
+const WIN_H = 430;
+const HERMES_DIR = path.join(process.env.LOCALAPPDATA || '', 'hermes');
+const PERSONA_FILE = path.join(__dirname, 'persona.json');
+
+let win = null;
+let tray = null;
+let chatWin = null;
+let topMost = true;
+let chatBusy = false;
+let hermesTimer = null;
+let previousHermes = null;
+let persona = readJson(PERSONA_FILE, {});
+let petState = {
+  status: 'idle',
+  statusText: '待命',
+  hermesOnline: false,
+  hermesText: 'Hermes 离线',
+  runningCount: 0,
+  queue: { todo: 0, ready: 0, scheduled: 0, running: 0, blocked: 0, review: 0, done: 0 },
+  currentTask: null,
+  agents: [],
+  emotion: '平静',
+  address: '大哥',
+  affection: 50,
+  mood: 72
+};
+
+const DEFAULT_SETTINGS = {
+  userName: '大哥',
+  petName: 'Hermes',
+  persona: '你是 Hermes 的专属桌宠。你是可靠、机灵、略带执事感的伙伴，说话直接但有分寸。你会主动关心主人正在做的事，优先给出能执行的下一步，不说空话。',
+  apiBase: 'https://api.deepseek.com/v1',
+  model: 'deepseek-chat',
+  apiKeyCipher: ''
+};
+
+function dataDir() {
+  return app.getPath('userData');
+}
+
+function readJson(file, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+  } catch {
+    return fallback;
+  }
+}
+
+function chooseAddress(emotion, state) {
+  const pool = Array.isArray(persona?.address?.pool) ? persona.address.pool : [];
+  const preferred = emotion === '闹别扭' ? '小朋友' : emotion === '委屈' ? '板板' : emotion === '得意' ? '老板' : '';
+  const candidates = pool.filter((item) => item?.word && item.word !== state.address);
+  const picked = candidates.find((item) => item.word === preferred) || candidates[0];
+  return picked?.word || state.address || '大哥';
+}
+
+function emotionFor(event, state) {
+  if (event === 'success') return '得意';
+  if (event === 'error') return '有点烦';
+  if (event === 'working') return '兴奋';
+  if (event === 'offline') return '委屈';
+  const hour = new Date().getHours();
+  if (hour >= 1 && hour < 8) return '犯困';
+  if (state.mood >= 82) return '开心';
+  return '平静';
+}
+
+function statusFromSnapshot(snapshot) {
+  if (!snapshot?.online) return { status: 'error', statusText: '离线' };
+  if (snapshot.blocked.length) return { status: 'error', statusText: '有任务受阻' };
+  if (snapshot.running.length) return { status: 'working', statusText: '执行中' };
+  if (snapshot.review.length) return { status: 'success', statusText: '待验收' };
+  const hour = new Date().getHours();
+  if (hour >= 1 && hour < 8) return { status: 'sleep', statusText: '休眠' };
+  return { status: 'idle', statusText: '待命' };
+}
+
+function taskMap(snapshot) {
+  return new Map((snapshot?.tasks || []).filter((task) => task.id != null).map((task) => [String(task.id), task]));
+}
+
+function taskTitle(task) {
+  return String(task?.title || task?.name || `任务 #${task?.id ?? '?'}`).trim();
+}
+
+function announce(text, options = {}) {
+  if (!text) return;
+  if (win && !win.isDestroyed()) win.webContents.send('announce', text, options);
+  if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.send('announce', text, options);
+  if (options.notify && Notification.isSupported()) {
+    new Notification({ title: '赫尔墨兹', body: text }).show();
+  }
+}
+
+function applyHermesSnapshot(snapshot) {
+  const next = snapshot?.online ? snapshot : {
+    online: false,
+    activeAgents: 0,
+    running: [],
+    blocked: [],
+    review: [],
+    counts: { todo: 0, ready: 0, scheduled: 0, running: 0, blocked: 0, review: 0, done: 0 },
+    currentTask: null,
+    agents: [],
+    checkedAt: Date.now()
+  };
+  const stateChange = statusFromSnapshot(next);
+  const event = !next.online ? 'offline' : next.blocked.length ? 'error' : next.running.length ? 'working' : previousHermes?.running?.length ? 'success' : 'idle';
+  const statusChanged = !previousHermes || stateChange.status !== petState.status;
+  const nextEmotion = emotionFor(event, petState);
+  petState = {
+    ...petState,
+    ...stateChange,
+    hermesOnline: !!next.online,
+    hermesText: next.online ? `在线 · ${next.running.length} 个在跑` : 'Hermes 离线',
+    runningCount: next.running.length,
+    queue: next.counts,
+    currentTask: next.currentTask ? {
+      id: next.currentTask.id,
+      title: taskTitle(next.currentTask),
+      assignee: next.currentTask.assignee || ''
+    } : null,
+    agents: next.agents,
+    emotion: nextEmotion,
+    address: statusChanged ? chooseAddress(nextEmotion, petState) : petState.address
+  };
+  pushPetState();
+
+  if (previousHermes) {
+    const before = taskMap(previousHermes);
+    const after = taskMap(next);
+    for (const [id, task] of after) {
+      const old = before.get(id);
+      if (!old || old.status === task.status) continue;
+      if (task.status === 'done') {
+        petState.emotion = '得意';
+        petState.mood = Math.min(100, petState.mood + 2);
+        announce(`${petState.address}，${taskTitle(task)} 完成了，验收一下`, { notify: true, kind: 'success' });
+      } else if (task.status === 'blocked') {
+        petState.emotion = '有点烦';
+        petState.mood = Math.max(0, petState.mood - 1);
+        announce(`${petState.address}，${taskTitle(task)} 受阻了。先别急，我把问题盯住`, { notify: true, kind: 'error' });
+      }
+    }
+    if (previousHermes.online && !next.online) {
+      announce(`${petState.address}，Hermes 服务断了，我先安静等它回来`, { notify: true, kind: 'error' });
+    } else if (!previousHermes.online && next.online) {
+      announce(`${petState.address}，Hermes 回来了，现在在线`, { notify: false, kind: 'success' });
+    }
+  }
+  previousHermes = next;
+  savePetState();
+}
+
+async function pollHermes() {
+  try {
+    applyHermesSnapshot(await hermesBridge.snapshot());
+  } catch {
+    applyHermesSnapshot({ online: false });
+  }
+}
+
+function startHermesPolling() {
+  clearInterval(hermesTimer);
+  pollHermes();
+  hermesTimer = setInterval(pollHermes, 3000);
+}
+
+function writeJson(file, value) {
+  const tmp = `${file}.tmp`;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify(value, null, 2), 'utf8');
+    fs.renameSync(tmp, file);
+    return true;
+  } catch {
+    try { fs.unlinkSync(tmp); } catch {}
+    return false;
+  }
+}
+
+function settingsFile() {
+  return path.join(dataDir(), 'settings.json');
+}
+
+function historyFile() {
+  return path.join(dataDir(), 'memory', 'chat.json');
+}
+
+function stateFile() {
+  return path.join(dataDir(), 'memory', 'state.json');
+}
+
+function loadSettings() {
+  return { ...DEFAULT_SETTINGS, ...(readJson(settingsFile(), {}) || {}) };
+}
+
+function getApiKey(settings = loadSettings()) {
+  if (!settings.apiKeyCipher || !safeStorage.isEncryptionAvailable()) return '';
+  try {
+    return safeStorage.decryptString(Buffer.from(settings.apiKeyCipher, 'base64'));
+  } catch {
+    return '';
+  }
+}
+
+function saveSettings(input = {}) {
+  const current = loadSettings();
+  const next = {
+    ...current,
+    userName: String(input.userName || current.userName).trim().slice(0, 40) || DEFAULT_SETTINGS.userName,
+    petName: String(input.petName || current.petName).trim().slice(0, 40) || DEFAULT_SETTINGS.petName,
+    persona: String(input.persona || current.persona).trim().slice(0, 1200) || DEFAULT_SETTINGS.persona,
+    apiBase: String(input.apiBase || current.apiBase).trim().replace(/\/+$/, '') || DEFAULT_SETTINGS.apiBase,
+    model: String(input.model || current.model).trim().slice(0, 100) || DEFAULT_SETTINGS.model
+  };
+  if (input.apiKey && String(input.apiKey).trim()) {
+    if (safeStorage.isEncryptionAvailable()) {
+      next.apiKeyCipher = safeStorage.encryptString(String(input.apiKey).trim()).toString('base64');
+    }
+  } else if (input.clearApiKey) {
+    next.apiKeyCipher = '';
+  }
+  writeJson(settingsFile(), next);
+  return next;
+}
+
+function publicSettings() {
+  const s = loadSettings();
+  return {
+    userName: s.userName,
+    petName: s.petName,
+    persona: s.persona,
+    apiBase: s.apiBase,
+    model: s.model,
+    hasApiKey: !!s.apiKeyCipher
+  };
+}
+
+function loadHistory() {
+  const rows = readJson(historyFile(), []);
+  return Array.isArray(rows) ? rows.filter((x) => x && (x.role === 'user' || x.role === 'assistant')).slice(-200) : [];
+}
+
+function appendHistory(role, content) {
+  const rows = loadHistory();
+  rows.push({ role, content: String(content || '').slice(0, 8000), at: Date.now() });
+  writeJson(historyFile(), rows.slice(-200));
+}
+
+function loadPetState() {
+  const saved = readJson(stateFile(), {});
+  const lastSeen = Number(saved.lastSeen) || Date.now();
+  const hoursAway = Math.max(0, (Date.now() - lastSeen) / 3600000);
+  return {
+    status: 'idle',
+    statusText: '待命',
+    emotion: saved.emotion || '平静',
+    address: saved.address || '大哥',
+    hermesOnline: false,
+    hermesText: 'Hermes 离线',
+    runningCount: 0,
+    queue: { todo: 0, ready: 0, scheduled: 0, running: 0, blocked: 0, review: 0, done: 0 },
+    currentTask: null,
+    agents: [],
+    affection: Math.max(0, Math.min(100, Number(saved.affection) || 50)),
+    mood: Math.max(0, Math.min(100, (Number(saved.mood) || 72) - Math.min(24, Math.floor(hoursAway * 1.5))))
+  };
+}
+
+function savePetState() {
+  writeJson(stateFile(), {
+    affection: petState.affection,
+    mood: petState.mood,
+    emotion: petState.emotion,
+    address: petState.address,
+    lastSeen: Date.now()
+  });
+}
+
+function pushPetState() {
+  if (win && !win.isDestroyed()) win.webContents.send('pet-state', petState);
+  if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.send('pet-state', petState);
+}
+
+function setPetState(status, statusText) {
+  petState.status = status || 'idle';
+  petState.statusText = statusText || ({ idle: '待命', thinking: '思考中', working: '执行中', success: '完成', error: '遇到问题', sleep: '安静中' }[petState.status] || '待命');
+  pushPetState();
+}
+
+function adjustPetState(affection = 0, mood = 0) {
+  petState.affection = Math.max(0, Math.min(100, Math.round(petState.affection + affection)));
+  petState.mood = Math.max(0, Math.min(100, Math.round(petState.mood + mood)));
+  savePetState();
+  pushPetState();
+}
+
+function localReply(text) {
+  const t = String(text || '').toLowerCase();
+  if (/你好|嗨|早上好|晚上好|在吗/.test(t)) return '我在。今天先把最重要的一件事拎出来，我陪你做完。';
+  if (/累|困|休息|睡觉/.test(t)) return '收到。先离开屏幕两分钟，回来以后我帮你把剩下的事拆小。';
+  if (/状态|怎么样|进度/.test(t)) return `我现在${petState.statusText}，心情 ${petState.mood}/100，好感 ${petState.affection}/100。`;
+  if (/谢谢|辛苦/.test(t)) return '记下了。你把下一步交给我，别自己扛着。';
+  return '我已经记住这句话了。现在还没接入模型，我先陪你把想法理顺；配置 DeepSeek 后，我会继续接着聊。';
+}
+
+async function askModel(text) {
+  const settings = loadSettings();
+  const apiKey = getApiKey(settings);
+  if (!apiKey) return localReply(text);
+  const base = settings.apiBase.replace(/\/+$/, '');
+  const recent = loadHistory().slice(-16).map((m) => ({ role: m.role, content: m.content }));
+  const system = `${settings.persona}
+主人称呼：${settings.userName}。
+你是桌宠，不要声称自己已经执行了电脑操作。当前状态：${petState.statusText}；心情：${petState.mood}/100；好感：${petState.affection}/100。
+回答要短、具体、像熟悉主人的桌面伙伴。除非主人要求，不要输出 Markdown 标题，不要复述问题。`;
+  const response = await fetch(`${base}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: settings.model,
+      temperature: 0.8,
+      max_tokens: 500,
+      messages: [{ role: 'system', content: system }, ...recent]
+    }),
+    signal: AbortSignal.timeout(90000)
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`模型接口返回 ${response.status}${body ? `：${body.slice(0, 160)}` : ''}`);
+  }
+  const data = await response.json();
+  const answer = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+  if (!answer) throw new Error('模型没有返回可显示的内容');
+  return String(answer).trim();
+}
+
+function createWindow() {
+  const { workArea } = screen.getPrimaryDisplay();
+
+  win = new BrowserWindow({
+    width: WIN_W,
+    height: WIN_H,
+    x: workArea.x + workArea.width - WIN_W - 30,
+    y: workArea.y + workArea.height - WIN_H + 10,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    alwaysOnTop: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  win.once('ready-to-show', () => win.show());
+  win.on('move', () => {
+    if (!win.isDestroyed()) {
+      const [x, y] = win.getPosition();
+      writeJson(path.join(dataDir(), 'position.json'), { x, y });
+    }
+  });
+
+  // 开发自检：PET_SHOT=1 时把窗口渲染结果存一张图，用来核对透明与排版
+  if (process.env.PET_SHOT) {
+    setTimeout(async () => {
+      const img = await win.capturePage();
+      fs.writeFileSync(path.join(__dirname, 'shot.png'), img.toPNG());
+      console.log('shot saved:', path.join(__dirname, 'shot.png'));
+    }, 2600);
+  }
+  win.on('closed', () => { win = null; });
+}
+
+function createChatWindow() {
+  if (chatWin && !chatWin.isDestroyed()) return chatWin;
+  chatWin = new BrowserWindow({
+    width: 760,
+    height: 780,
+    minWidth: 620,
+    minHeight: 620,
+    frame: false,
+    backgroundColor: '#f7f8fc',
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  chatWin.loadFile(path.join(__dirname, 'renderer', 'chat.html'));
+  chatWin.once('ready-to-show', () => {
+    chatWin.show();
+    pushPetState();
+  });
+  chatWin.on('closed', () => { chatWin = null; });
+  return chatWin;
+}
+
+function showChat() {
+  const panel = createChatWindow();
+  panel.show();
+  panel.focus();
+}
+
+// ---------- 托盘 ----------
+function createTray() {
+  const iconPath = path.join(__dirname, 'assets', 'hermes-chibi.png');
+  let icon = nativeImage.createFromPath(iconPath);
+  if (!icon.isEmpty()) icon = icon.resize({ width: 32, height: 32 });
+
+  tray = new Tray(icon);
+  tray.setToolTip('Hermes 桌宠');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '叫她出来', click: () => showPet() },
+    { label: '打开 Hermes 对话', click: () => showChat() },
+    { label: '安静一会儿', click: () => win && win.hide() },
+    { type: 'separator' },
+    { label: '打开 Hermes 目录', click: () => shell.openPath(HERMES_DIR) },
+    { type: 'separator' },
+    { label: '退出', click: () => app.quit() }
+  ]));
+  tray.on('double-click', () => showPet());
+}
+
+function showPet() {
+  if (!win) createWindow();
+  else { win.show(); win.setAlwaysOnTop(true, 'screen-saver'); }
+}
+
+// ---------- 鼠标穿透：只有落在小人身上才接管点击 ----------
+ipcMain.on('set-ignore', (_e, ignore) => {
+  if (!win) return;
+  if (ignore) win.setIgnoreMouseEvents(true, { forward: true });
+  else win.setIgnoreMouseEvents(false);
+});
+
+// ---------- 拖拽 ----------
+ipcMain.on('move-to', (_e, x, y) => {
+  if (!win) return;
+  const [cx, cy] = win.getPosition();
+  win.setPosition(Math.round(cx + x), Math.round(cy + y));
+});
+
+ipcMain.on('snap-corner', () => {
+  if (!win) return;
+  const { workArea } = screen.getPrimaryDisplay();
+  win.setPosition(
+    workArea.x + workArea.width - WIN_W - 30,
+    workArea.y + workArea.height - WIN_H + 10
+  );
+});
+
+// ---------- 菜单动作 ----------
+ipcMain.on('toggle-top', () => {
+  if (!win) return;
+  topMost = !topMost;
+  win.setAlwaysOnTop(topMost, topMost ? 'screen-saver' : 'normal');
+  win.webContents.send('toast', topMost ? '已置顶' : '取消置顶');
+});
+
+ipcMain.on('open-hermes-dir', () => shell.openPath(HERMES_DIR));
+ipcMain.on('open-chat', () => showChat());
+ipcMain.on('set-status', (_e, status) => {
+  const map = { idle: '待命', thinking: '思考中', working: '执行中', success: '完成', sleep: '安静中' };
+  setPetState(status, map[status] || '待命');
+});
+ipcMain.on('hide-chat', () => chatWin && chatWin.hide());
+ipcMain.on('close-chat', () => chatWin && chatWin.close());
+
+ipcMain.handle('pet-state-get', () => petState);
+ipcMain.handle('hermes-snapshot-get', async () => {
+  try { return await hermesBridge.snapshot(); } catch { return { online: false }; }
+});
+ipcMain.handle('settings-get', () => publicSettings());
+ipcMain.handle('settings-save', (_e, input) => {
+  const saved = saveSettings(input || {});
+  return { ...publicSettings(), hasApiKey: !!saved.apiKeyCipher };
+});
+ipcMain.handle('history-get', () => loadHistory());
+ipcMain.handle('chat-send', async (_e, text) => {
+  const message = String(text || '').trim().slice(0, 4000);
+  if (!message) return { ok: false, error: '消息不能为空' };
+  if (chatBusy) return { ok: false, error: '我还在处理上一条消息' };
+  chatBusy = true;
+  appendHistory('user', message);
+  adjustPetState(1, 1);
+  setPetState('thinking');
+  try {
+    const answer = await askModel(message);
+    appendHistory('assistant', answer);
+    adjustPetState(1, 2);
+    setPetState('success');
+    setTimeout(() => setPetState('idle'), 1600);
+    return { ok: true, answer };
+  } catch (error) {
+    setPetState('error', '连接异常');
+    return { ok: false, error: error && error.message ? error.message : '模型请求失败' };
+  } finally {
+    chatBusy = false;
+  }
+});
+
+// ---------- 开机自启 ----------
+ipcMain.on('toggle-autostart', () => {
+  if (!win) return;
+  const on = app.getLoginItemSettings().openAtLogin;
+  app.setLoginItemSettings({
+    openAtLogin: !on,
+    path: process.execPath,
+    args: app.isPackaged ? [] : [app.getAppPath()]
+  });
+  win.webContents.send('toast', !on ? '下次开机会自己出来' : '已取消开机自启');
+});
+
+ipcMain.on('quit', () => app.quit());
+
+ipcMain.on('hide-pet', () => win && win.hide());
+
+// ---------- 启动 ----------
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => showPet());
+  app.whenReady().then(() => {
+    fs.mkdirSync(HERMES_DIR, { recursive: true });
+    petState = loadPetState();
+    createWindow();
+    createTray();
+    startHermesPolling();
+    globalShortcut.register('CommandOrControl+Shift+H', showChat);
+  });
+}
+
+app.on('window-all-closed', (e) => {
+  // 桌宠不退，留在托盘
+  e.preventDefault && e.preventDefault();
+});
+
+app.on('activate', () => showPet());
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  savePetState();
+});

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hermes 对话</title>
+  <link rel="stylesheet" href="chat.css" />
+</head>
+<body>
+  <header id="titlebar">
+    <div>
+      <div class="eyebrow">HERMES PRIVATE CHANNEL</div>
+      <h1>Hermes <span id="connection-state">本地陪伴模式</span></h1>
+    </div>
+    <div class="window-actions">
+      <button id="settings-btn" title="设置">设置</button>
+      <button id="hide-btn" title="隐藏窗口">—</button>
+      <button id="close-btn" title="关闭窗口">×</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="setup" class="panel hidden">
+      <div class="panel-head">
+        <div>
+          <h2>连接与人设</h2>
+          <p>密钥只由主进程保存，聊天窗只拿到是否已配置的结果。</p>
+        </div>
+        <button id="setup-close" class="quiet">收起</button>
+      </div>
+      <div class="grid">
+        <label>主人称呼<input id="user-name" maxlength="40" /></label>
+        <label>桌宠名字<input id="pet-name" maxlength="40" /></label>
+        <label class="wide">API 地址<input id="api-base" placeholder="https://api.deepseek.com/v1" /></label>
+        <label>模型<input id="model" placeholder="deepseek-chat" /></label>
+        <label>API Key<input id="api-key" type="password" placeholder="留空表示不修改" /></label>
+        <label class="wide">专属人设<textarea id="persona" rows="4"></textarea></label>
+      </div>
+      <div class="setup-foot">
+        <label class="check"><input id="clear-key" type="checkbox" /> 清除已保存密钥</label>
+        <button id="save-settings" class="primary">保存设置</button>
+      </div>
+      <div id="setup-msg" class="hint"></div>
+    </section>
+
+    <section id="chat" class="chat-shell">
+      <div id="messages"></div>
+      <div id="composer">
+        <textarea id="input" rows="2" placeholder="和 Hermes 说点什么…"></textarea>
+        <div class="composer-foot">
+          <span id="mood">心情 -- · 好感 --</span>
+          <button id="send" class="primary">发送</button>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script src="chat.js"></script>
+</body>
+</html>
