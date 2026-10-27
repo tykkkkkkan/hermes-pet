@@ -2,6 +2,9 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, shell, glo
 const path = require('path');
 const fs = require('fs');
 const hermesBridge = require('./hermes-bridge');
+const petMemory = require('./memory');
+const petEmotion = require('./pet-emotion');
+const petRuntime = require('./pet-runtime');
 
 const WIN_W = 260;
 const WIN_H = 430;
@@ -15,6 +18,7 @@ let topMost = true;
 let chatBusy = false;
 let hermesTimer = null;
 let previousHermes = null;
+let successUntil = 0;
 let persona = readJson(PERSONA_FILE, {});
 let petState = {
   status: 'idle',
@@ -33,7 +37,7 @@ let petState = {
 
 const DEFAULT_SETTINGS = {
   userName: '大哥',
-  petName: 'Hermes',
+  petName: '赫尔墨兹',
   persona: '你是 Hermes 的专属桌宠。你是可靠、机灵、略带执事感的伙伴，说话直接但有分寸。你会主动关心主人正在做的事，优先给出能执行的下一步，不说空话。',
   apiBase: 'https://api.deepseek.com/v1',
   model: 'deepseek-chat',
@@ -52,30 +56,57 @@ function readJson(file, fallback) {
   }
 }
 
-function chooseAddress(emotion, state) {
-  const pool = Array.isArray(persona?.address?.pool) ? persona.address.pool : [];
-  const preferred = emotion === '闹别扭' ? '小朋友' : emotion === '委屈' ? '板板' : emotion === '得意' ? '老板' : '';
-  const candidates = pool.filter((item) => item?.word && item.word !== state.address);
-  const picked = candidates.find((item) => item.word === preferred) || candidates[0];
-  return picked?.word || state.address || '大哥';
+function applyEmotionEvent(event, { switchAddress = true } = {}) {
+  petState = petEmotion.applyEvent(petState, event);
+  if (switchAddress) {
+    const pool = Array.isArray(persona?.address?.pool) ? persona.address.pool : [];
+    petState.addressHistory = Array.isArray(petState.addressHistory) ? petState.addressHistory : [];
+    const nextAddress = petEmotion.chooseAddress(
+      petState.emotion, petState.address, pool, petState.addressHistory
+    );
+    if (nextAddress !== petState.address) {
+      petState.address = nextAddress;
+      petState.addressHistory = [...petState.addressHistory, nextAddress].slice(-2);
+    }
+  }
 }
 
-function emotionFor(event, state) {
-  if (event === 'success') return '得意';
-  if (event === 'error') return '有点烦';
-  if (event === 'working') return '兴奋';
-  if (event === 'offline') return '委屈';
-  const hour = new Date().getHours();
-  if (hour >= 1 && hour < 8) return '犯困';
-  if (state.mood >= 82) return '开心';
-  return '平静';
+function refreshEmotionClock(now = Date.now()) {
+  petState = petEmotion.decay(petState, now);
+  const lastInteraction = Number(petState.lastInteraction) || now;
+  const lastIgnoredAt = Number(petState.lastIgnoredAt) || 0;
+  if (now - lastInteraction >= 6 * 3600000 && now - lastIgnoredAt >= 6 * 3600000) {
+    applyEmotionEvent('ignored');
+    petState.lastIgnoredAt = now;
+  }
+}
+
+function trackUserEmotion(text) {
+  const message = String(text || '');
+  petState.lastInteraction = Date.now();
+  petState.lastIgnoredAt = 0;
+  if (/谢谢|辛苦|做得好|真棒|厉害|夸你/.test(message)) applyEmotionEvent('praised');
+  if (/催|快点|赶紧|怎么还没|进度呢/.test(message)) {
+    const now = Date.now();
+    const recentNagCount = Number(petState.recentNagCount) || 0;
+    const recentNagAt = Number(petState.recentNagAt) || 0;
+    petState.recentNagCount = now - recentNagAt <= 10 * 60000 ? recentNagCount + 1 : 1;
+    petState.recentNagAt = now;
+    if (petState.recentNagCount >= 3) {
+      applyEmotionEvent('nagged');
+      petState.recentNagCount = 0;
+    }
+  }
 }
 
 function statusFromSnapshot(snapshot) {
   if (!snapshot?.online) return { status: 'error', statusText: '离线' };
-  if (snapshot.blocked.length) return { status: 'error', statusText: '有任务受阻' };
-  if (snapshot.running.length) return { status: 'working', statusText: '执行中' };
-  if (snapshot.review.length) return { status: 'success', statusText: '待验收' };
+  const failedTasks = (snapshot.tasks || []).filter((task) => petRuntime.isFailureStatus(task.status));
+  if ((snapshot.blocked || []).length || failedTasks.length) return { status: 'error', statusText: '有任务受阻或失败' };
+  if ((snapshot.running || []).length) return { status: 'working', statusText: '执行中' };
+  if (snapshot.gatewayBusy) return { status: 'thinking', statusText: '思考中' };
+  if (successUntil > Date.now()) return { status: 'success', statusText: '刚刚完成' };
+  if ((snapshot.review || []).length) return { status: 'success', statusText: '待验收' };
   const hour = new Date().getHours();
   if (hour >= 1 && hour < 8) return { status: 'sleep', statusText: '休眠' };
   return { status: 'idle', statusText: '待命' };
@@ -91,11 +122,23 @@ function taskTitle(task) {
 
 function announce(text, options = {}) {
   if (!text) return;
+  if (!petRuntime.shouldAnnounce({
+    taskResult: options.taskResult === true,
+    userInitiated: options.userInitiated === true
+  })) return;
   if (win && !win.isDestroyed()) win.webContents.send('announce', text, options);
   if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.send('announce', text, options);
   if (options.notify && Notification.isSupported()) {
     new Notification({ title: '赫尔墨兹', body: text }).show();
   }
+}
+
+function interactionLine(zone, mood) {
+  const address = petState.address || '大哥';
+  const region = persona.touchReactions?.[zone] || persona.touchReactions?.body;
+  const moodKey = mood >= 45 ? 'good' : 'bad';
+  return String(region?.[moodKey] || `${address}，有事直说，别只戳我`)
+    .replaceAll('{address}', address);
 }
 
 function applyHermesSnapshot(snapshot) {
@@ -110,14 +153,23 @@ function applyHermesSnapshot(snapshot) {
     agents: [],
     checkedAt: Date.now()
   };
+  if (previousHermes) {
+    const beforeTasks = taskMap(previousHermes);
+    const completed = (next.tasks || []).some((task) => {
+      const old = beforeTasks.get(String(task.id));
+      return task.status === 'done' && old && old.status !== 'done';
+    });
+    if (completed) successUntil = Date.now() + 4500;
+    if ((next.blocked || []).length || (next.tasks || []).some((task) => petRuntime.isFailureStatus(task.status))) successUntil = 0;
+  }
   const stateChange = statusFromSnapshot(next);
-  const event = !next.online ? 'offline' : next.blocked.length ? 'error' : next.running.length ? 'working' : previousHermes?.running?.length ? 'success' : 'idle';
   const statusChanged = !previousHermes || stateChange.status !== petState.status;
-  const nextEmotion = emotionFor(event, petState);
+  refreshEmotionClock();
   petState = {
     ...petState,
     ...stateChange,
     hermesOnline: !!next.online,
+    gatewayBusy: !!next.gatewayBusy,
     hermesText: next.online ? `在线 · ${next.running.length} 个在跑` : 'Hermes 离线',
     runningCount: next.running.length,
     queue: next.counts,
@@ -126,10 +178,9 @@ function applyHermesSnapshot(snapshot) {
       title: taskTitle(next.currentTask),
       assignee: next.currentTask.assignee || ''
     } : null,
-    agents: next.agents,
-    emotion: nextEmotion,
-    address: statusChanged ? chooseAddress(nextEmotion, petState) : petState.address
+    agents: next.agents
   };
+  if (statusChanged && (next.running || []).length) applyEmotionEvent('working');
   pushPetState();
 
   if (previousHermes) {
@@ -139,13 +190,14 @@ function applyHermesSnapshot(snapshot) {
       const old = before.get(id);
       if (!old || old.status === task.status) continue;
       if (task.status === 'done') {
-        petState.emotion = '得意';
+        applyEmotionEvent('success');
         petState.mood = Math.min(100, petState.mood + 2);
-        announce(`${petState.address}，${taskTitle(task)} 完成了，验收一下`, { notify: true, kind: 'success' });
-      } else if (task.status === 'blocked') {
-        petState.emotion = '有点烦';
+        announce(`${petState.address}，${taskTitle(task)} 完成了，验收一下`, { notify: true, kind: 'success', taskResult: true });
+      } else if (petRuntime.isFailureStatus(task.status)) {
+        applyEmotionEvent('failure');
         petState.mood = Math.max(0, petState.mood - 1);
-        announce(`${petState.address}，${taskTitle(task)} 受阻了。先别急，我把问题盯住`, { notify: true, kind: 'error' });
+        const resultWord = task.status === 'blocked' ? '受阻' : '失败';
+        announce(`${petState.address}，${taskTitle(task)} ${resultWord}了。先别急，我把问题盯住`, { notify: true, kind: 'error', taskResult: true });
       }
     }
     if (previousHermes.online && !next.online) {
@@ -195,6 +247,10 @@ function historyFile() {
 
 function stateFile() {
   return path.join(dataDir(), 'memory', 'state.json');
+}
+
+function recordSessionMessage(sessionId, role, content, at = Date.now()) {
+  return petMemory.record(path.join(dataDir(), 'memory'), sessionId, role, content, at);
 }
 
 function loadSettings() {
@@ -262,6 +318,11 @@ function loadPetState() {
     status: 'idle',
     statusText: '待命',
     emotion: saved.emotion || '平静',
+    emotionScores: saved.emotionScores || {},
+    addressHistory: Array.isArray(saved.addressHistory) ? saved.addressHistory.slice(-2) : [],
+    lastEmotionDecay: Number(saved.lastEmotionDecay) || lastSeen,
+    lastInteraction: Number(saved.lastInteraction) || lastSeen,
+    lastIgnoredAt: Number(saved.lastIgnoredAt) || 0,
     address: saved.address || '大哥',
     hermesOnline: false,
     hermesText: 'Hermes 离线',
@@ -275,11 +336,17 @@ function loadPetState() {
 }
 
 function savePetState() {
+  refreshEmotionClock();
   writeJson(stateFile(), {
     affection: petState.affection,
     mood: petState.mood,
     emotion: petState.emotion,
     address: petState.address,
+    emotionScores: petState.emotionScores,
+    addressHistory: petState.addressHistory,
+    lastEmotionDecay: petState.lastEmotionDecay,
+    lastInteraction: petState.lastInteraction,
+    lastIgnoredAt: petState.lastIgnoredAt,
     lastSeen: Date.now()
   });
 }
@@ -488,6 +555,67 @@ ipcMain.handle('pet-state-get', () => petState);
 ipcMain.handle('hermes-snapshot-get', async () => {
   try { return await hermesBridge.snapshot(); } catch { return { online: false }; }
 });
+ipcMain.handle('session-history', async () => {
+  try { return await hermesBridge.sessionHistory(); } catch { return { sessionId: '', entries: [] }; }
+});
+ipcMain.handle('session-chat', async (_e, text) => {
+  const message = String(text || '').trim().slice(0, 4000);
+  if (!message) return { ok: false, error: '消息不能为空' };
+  if (chatBusy) return { ok: false, error: '我还在处理上一条消息' };
+  trackUserEmotion(message);
+  chatBusy = true;
+  setPetState('thinking', '思考中');
+  const sentAt = Date.now();
+  try {
+    const result = await hermesBridge.sessionChat(message);
+    if (!result.answer) throw new Error('Hermes 没有返回可显示的内容');
+    recordSessionMessage(result.sessionId, 'user', message, sentAt);
+    recordSessionMessage(result.sessionId, 'assistant', result.answer);
+    adjustPetState(1, 1);
+    setPetState('success', '回复完成');
+    setTimeout(() => {
+    if (!petState.hermesOnline || !petState.runningCount) setPetState(statusFromSnapshot(previousHermes || { online: false }).status);
+    }, 1200);
+    return { ok: true, answer: result.answer, sessionId: result.sessionId };
+  } catch (error) {
+    setPetState('error', '会话异常');
+    return { ok: false, error: error?.message || 'Hermes 会话请求失败' };
+  } finally {
+    chatBusy = false;
+  }
+});
+ipcMain.handle('task-create', async (_e, payload) => {
+  try {
+    const result = await hermesBridge.createTask(payload || {});
+    const task = result?.task || {};
+    announce(`${petState.address || '大哥'}，任务「${task.title || payload?.title || '未命名'}」已经放进 Hermes`, { kind: 'success', userInitiated: true });
+    return { ok: true, task: result };
+  } catch (error) {
+    return { ok: false, error: error?.message || '任务创建失败' };
+  }
+});
+ipcMain.handle('task-upload', async (_e, taskId, filePath) => {
+  try {
+    return { ok: true, attachment: await hermesBridge.uploadAttachment(taskId, filePath) };
+  } catch (error) {
+    return { ok: false, error: error?.message || '附件上传失败' };
+  }
+});
+ipcMain.handle('memory-get', async () => ({
+  ...hermesBridge.memorySnapshot(),
+  archive: petMemory.snapshot(path.join(dataDir(), 'memory'))
+}));
+ipcMain.handle('skills-get', () => hermesBridge.skillSnapshot());
+ipcMain.on('pet-interact', (_e, zone) => {
+  const line = interactionLine(String(zone || 'body'), petState.mood);
+  applyEmotionEvent('touched');
+  petState.lastInteraction = Date.now();
+  petState.mood = Math.min(100, petState.mood + 1);
+  petState.affection = Math.min(100, petState.affection + 1);
+  savePetState();
+  pushPetState();
+  announce(line, { kind: 'interaction', userInitiated: true });
+});
 ipcMain.handle('settings-get', () => publicSettings());
 ipcMain.handle('settings-save', (_e, input) => {
   const saved = saveSettings(input || {});
@@ -498,6 +626,7 @@ ipcMain.handle('chat-send', async (_e, text) => {
   const message = String(text || '').trim().slice(0, 4000);
   if (!message) return { ok: false, error: '消息不能为空' };
   if (chatBusy) return { ok: false, error: '我还在处理上一条消息' };
+  trackUserEmotion(message);
   chatBusy = true;
   appendHistory('user', message);
   adjustPetState(1, 1);

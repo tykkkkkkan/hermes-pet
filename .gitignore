@@ -11,3 +11,7 @@ desktop.ini
 .idea/
 .env
 .env.*
+
+# 素材处理中间产物
+.bak-flat/
+.tmp/

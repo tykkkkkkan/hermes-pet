@@ -1,0 +1,686 @@
+diff --git a/hermes-bridge.js b/hermes-bridge.js
+index 8c08116..9a01f7c 100644
+--- a/hermes-bridge.js
++++ b/hermes-bridge.js
+@@ -3,6 +3,8 @@ const path = require('path');
+ 
+ const HERMES_DIR = path.join(process.env.LOCALAPPDATA || '', 'hermes');
+ const LEDGER_FILE = path.join(HERMES_DIR, 'spawn-ledger.json');
++const MEMORY_DIR = path.join(HERMES_DIR, 'memories');
++const SKILLS_DIR = path.join(HERMES_DIR, 'skills');
+ 
+ function readJson(file, fallback) {
+   try {
+@@ -43,6 +45,138 @@ async function getJson(connection, endpoint) {
+   return response.json();
+ }
+ 
++async function postJson(connection, endpoint, body) {
++  const response = await fetch(`${connection.base}${endpoint}`, {
++    method: 'POST',
++    headers: {
++      Authorization: `Bearer ${connection.token}`,
++      'Content-Type': 'application/json'
++    },
++    body: JSON.stringify(body || {}),
++    signal: timeoutSignal(90000)
++  });
++  const raw = await response.text();
++  let data = {};
++  try { data = raw ? JSON.parse(raw) : {}; } catch { data = { detail: raw }; }
++  if (!response.ok) throw new Error(`${endpoint} 返回 ${response.status}：${data.detail || raw || '请求失败'}`);
++  return data;
++}
++
++async function getBotChatSession(connection) {
++  const listed = await getJson(connection, '/api/sessions?title=Bot%20Chat&include_hidden=true&limit=20');
++  const rows = Array.isArray(listed?.data) ? listed.data
++    : Array.isArray(listed?.sessions) ? listed.sessions : [];
++  const exact = rows.find((row) => row?.id && row.title === 'Bot Chat');
++  if (exact) return exact;
++
++  // headless serve 当前只开放既有会话，不能假设 POST /api/sessions 一定可用。
++  // 没有专属 Bot Chat 时复用 default profile 的活跃会话，保证桌宠和 Hermes 仍是同一条线。
++  const active = rows.find((row) => row?.id && row.is_active && (row.profile_name || row.profile) === 'default');
++  const fallback = rows
++    .filter((row) => row?.id && (row.profile_name || row.profile) === 'default')
++    .sort((a, b) => Number(b.last_active || 0) - Number(a.last_active || 0))[0];
++  const session = active || fallback;
++  if (session) return session;
++  throw new Error('Hermes 没有可用的 default 会话');
++}
++
++function normalizeSessionMessage(message) {
++  const content = message?.content;
++  if (typeof content === 'string') return content;
++  if (Array.isArray(content)) {
++    return content.map((part) => typeof part === 'string' ? part : part?.text || '').join('');
++  }
++  return '';
++}
++
++async function sessionHistory() {
++  const connection = await connect();
++  const session = await getBotChatSession(connection);
++  const result = await getJson(connection, `/api/sessions/${encodeURIComponent(session.id)}/messages?limit=200&order=latest`);
++  const rows = Array.isArray(result?.data) ? result.data
++    : Array.isArray(result?.messages) ? result.messages : [];
++  return {
++    sessionId: session.id,
++    entries: rows.reverse().map((message) => ({
++      role: message.role === 'user' ? 'user' : message.role === 'assistant' ? 'assistant' : 'system',
++      content: normalizeSessionMessage(message),
++      at: message.timestamp || Date.now()
++    })).filter((row) => row.content)
++  };
++}
++
++async function sessionChat(text) {
++  const connection = await connect();
++  const session = await getBotChatSession(connection);
++  const result = await postJson(connection, `/api/sessions/${encodeURIComponent(session.id)}/chat`, {
++    message: String(text || '').slice(0, 4000)
++  });
++  const message = result?.message || {};
++  return {
++    sessionId: session.id,
++    answer: normalizeSessionMessage(message) || String(result?.final_response || '').trim()
++  };
++}
++
++async function createTask(payload) {
++  const connection = await connect();
++  return postJson(connection, '/api/plugins/kanban/tasks', {
++    title: String(payload?.title || '').trim().slice(0, 240),
++    body: String(payload?.body || '').slice(0, 12000),
++    assignee: payload?.assignee || null,
++    priority: Number.isFinite(Number(payload?.priority)) ? Number(payload.priority) : 0,
++    workspace_kind: payload?.workspace_kind || null,
++    workspace_path: payload?.workspace_path || null,
++    skills: Array.isArray(payload?.skills) ? payload.skills.slice(0, 20) : null,
++    triage: !!payload?.triage
++  });
++}
++
++async function uploadAttachment(taskId, filePath) {
++  const connection = await connect();
++  const stat = fs.statSync(filePath);
++  if (!stat.isFile()) throw new Error('拖入的路径不是文件');
++  if (stat.size > 50 * 1024 * 1024) throw new Error('附件超过 Hermes 的 50 MB 限制');
++  const form = new FormData();
++  const bytes = fs.readFileSync(filePath);
++  form.append('file', new Blob([bytes]), path.basename(filePath));
++  form.append('uploaded_by', 'hermes-pet');
++  const response = await fetch(`${connection.base}/api/plugins/kanban/tasks/${encodeURIComponent(taskId)}/attachments`, {
++    method: 'POST',
++    headers: { Authorization: `Bearer ${connection.token}` },
++    body: form,
++    signal: timeoutSignal(90000)
++  });
++  const raw = await response.text();
++  let data = {};
++  try { data = raw ? JSON.parse(raw) : {}; } catch { data = { detail: raw }; }
++  if (!response.ok) throw new Error(`附件上传失败：${data.detail || raw || response.status}`);
++  return data;
++}
++
++function readText(file, limit = 12000) {
++  try { return fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '').slice(0, limit); } catch { return ''; }
++}
++
++function memorySnapshot() {
++  return {
++    user: readText(path.join(MEMORY_DIR, 'USER.md')),
++    longTerm: readText(path.join(MEMORY_DIR, 'MEMORY.md'))
++  };
++}
++
++function skillSnapshot() {
++  const rows = [];
++  try {
++    for (const entry of fs.readdirSync(SKILLS_DIR, { withFileTypes: true })) {
++      if (!entry.isDirectory()) continue;
++      const file = path.join(SKILLS_DIR, entry.name, 'SKILL.md');
++      if (fs.existsSync(file)) rows.push({ name: entry.name, content: readText(file, 5000) });
++    }
++  } catch {}
++  return rows.sort((a, b) => a.name.localeCompare(b.name));
++}
++
+ function taskStatus(task, column) {
+   return String(task?.status || task?.state || column || '').toLowerCase();
+ }
+@@ -98,4 +232,7 @@ async function snapshot() {
+   };
+ }
+ 
+-module.exports = { HERMES_DIR, LEDGER_FILE, snapshot, normalizeBoard };
++module.exports = {
++  HERMES_DIR, LEDGER_FILE, snapshot, normalizeBoard, sessionHistory, sessionChat,
++  createTask, uploadAttachment, memorySnapshot, skillSnapshot
++};
+diff --git a/main.js b/main.js
+index 9babed4..0ca00d7 100644
+--- a/main.js
++++ b/main.js
+@@ -33,7 +33,7 @@ let petState = {
+ 
+ const DEFAULT_SETTINGS = {
+   userName: '大哥',
+-  petName: 'Hermes',
++  petName: '赫尔墨兹',
+   persona: '你是 Hermes 的专属桌宠。你是可靠、机灵、略带执事感的伙伴，说话直接但有分寸。你会主动关心主人正在做的事，优先给出能执行的下一步，不说空话。',
+   apiBase: 'https://api.deepseek.com/v1',
+   model: 'deepseek-chat',
+@@ -73,9 +73,9 @@ function emotionFor(event, state) {
+ 
+ function statusFromSnapshot(snapshot) {
+   if (!snapshot?.online) return { status: 'error', statusText: '离线' };
+-  if (snapshot.blocked.length) return { status: 'error', statusText: '有任务受阻' };
+-  if (snapshot.running.length) return { status: 'working', statusText: '执行中' };
+-  if (snapshot.review.length) return { status: 'success', statusText: '待验收' };
++  if ((snapshot.blocked || []).length) return { status: 'error', statusText: '有任务受阻' };
++  if ((snapshot.running || []).length) return { status: 'working', statusText: '执行中' };
++  if ((snapshot.review || []).length) return { status: 'success', statusText: '待验收' };
+   const hour = new Date().getHours();
+   if (hour >= 1 && hour < 8) return { status: 'sleep', statusText: '休眠' };
+   return { status: 'idle', statusText: '待命' };
+@@ -98,6 +98,18 @@ function announce(text, options = {}) {
+   }
+ }
+ 
++function interactionLine(zone) {
++  const address = petState.address || '大哥';
++  const lines = {
++    head: `${address}，摸头可以，别摸两下就跑`,
++    face: '脸没脏，刚才只是被任务气到了',
++    body: '这里是工作区，别戳，正在盯任务',
++    feet: '脚底下也不耽误我干活',
++    wing: '翅膀还在，状态也还稳着'
++  };
++  return lines[zone] || `${address}，有事直说，别只戳我`;
++}
++
+ function applyHermesSnapshot(snapshot) {
+   const next = snapshot?.online ? snapshot : {
+     online: false,
+@@ -111,7 +123,7 @@ function applyHermesSnapshot(snapshot) {
+     checkedAt: Date.now()
+   };
+   const stateChange = statusFromSnapshot(next);
+-  const event = !next.online ? 'offline' : next.blocked.length ? 'error' : next.running.length ? 'working' : previousHermes?.running?.length ? 'success' : 'idle';
++  const event = !next.online ? 'offline' : (next.blocked || []).length ? 'error' : (next.running || []).length ? 'working' : previousHermes?.running?.length ? 'success' : 'idle';
+   const statusChanged = !previousHermes || stateChange.status !== petState.status;
+   const nextEmotion = emotionFor(event, petState);
+   petState = {
+@@ -488,6 +500,58 @@ ipcMain.handle('pet-state-get', () => petState);
+ ipcMain.handle('hermes-snapshot-get', async () => {
+   try { return await hermesBridge.snapshot(); } catch { return { online: false }; }
+ });
++ipcMain.handle('session-history', async () => {
++  try { return await hermesBridge.sessionHistory(); } catch { return { sessionId: '', entries: [] }; }
++});
++ipcMain.handle('session-chat', async (_e, text) => {
++  const message = String(text || '').trim().slice(0, 4000);
++  if (!message) return { ok: false, error: '消息不能为空' };
++  if (chatBusy) return { ok: false, error: '我还在处理上一条消息' };
++  chatBusy = true;
++  setPetState('thinking', '思考中');
++  try {
++    const result = await hermesBridge.sessionChat(message);
++    if (!result.answer) throw new Error('Hermes 没有返回可显示的内容');
++    adjustPetState(1, 1);
++    setPetState('success', '回复完成');
++    setTimeout(() => {
++    if (!petState.hermesOnline || !petState.runningCount) setPetState(statusFromSnapshot(previousHermes || { online: false }).status);
++    }, 1200);
++    return { ok: true, answer: result.answer, sessionId: result.sessionId };
++  } catch (error) {
++    setPetState('error', '会话异常');
++    return { ok: false, error: error?.message || 'Hermes 会话请求失败' };
++  } finally {
++    chatBusy = false;
++  }
++});
++ipcMain.handle('task-create', async (_e, payload) => {
++  try {
++    const result = await hermesBridge.createTask(payload || {});
++    const task = result?.task || {};
++    announce(`${petState.address || '大哥'}，任务「${task.title || payload?.title || '未命名'}」已经放进 Hermes`, { kind: 'success' });
++    return { ok: true, task: result };
++  } catch (error) {
++    return { ok: false, error: error?.message || '任务创建失败' };
++  }
++});
++ipcMain.handle('task-upload', async (_e, taskId, filePath) => {
++  try {
++    return { ok: true, attachment: await hermesBridge.uploadAttachment(taskId, filePath) };
++  } catch (error) {
++    return { ok: false, error: error?.message || '附件上传失败' };
++  }
++});
++ipcMain.handle('memory-get', () => hermesBridge.memorySnapshot());
++ipcMain.handle('skills-get', () => hermesBridge.skillSnapshot());
++ipcMain.on('pet-interact', (_e, zone) => {
++  petState.emotion = '开心';
++  petState.mood = Math.min(100, petState.mood + 1);
++  petState.affection = Math.min(100, petState.affection + 1);
++  savePetState();
++  pushPetState();
++  announce(interactionLine(String(zone || 'body')), { kind: 'interaction' });
++});
+ ipcMain.handle('settings-get', () => publicSettings());
+ ipcMain.handle('settings-save', (_e, input) => {
+   const saved = saveSettings(input || {});
+diff --git a/package-lock.json b/package-lock.json
+index 380e422..c85d583 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,15 +1,17 @@
+ {
+   "name": "hermes-pet",
+-  "version": "1.0.0",
++  "version": "0.1.0",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "hermes-pet",
+-      "version": "1.0.0",
+-      "license": "ISC",
++      "version": "0.1.0",
++      "license": "MIT",
+       "devDependencies": {
+-        "electron": "^45.0.0"
++        "electron": "^45.0.0",
++        "jpeg-js": "^0.4.4",
++        "pngjs": "^7.0.0"
+       }
+     },
+     "node_modules/@electron-internal/extract-zip": {
+@@ -110,6 +112,13 @@
+       "dev": true,
+       "license": "ISC"
+     },
++    "node_modules/jpeg-js": {
++      "version": "0.4.4",
++      "resolved": "https://registry.npmmirror.com/jpeg-js/-/jpeg-js-0.4.4.tgz",
++      "integrity": "sha512-WZzeDOEtTOBK4Mdsar0IqEU5sMr3vSV2RqkAIzUEV2BHnUfKGyswWFPFwK5EeDo93K3FohSHbLAjj0s1Wzd+dg==",
++      "dev": true,
++      "license": "BSD-3-Clause"
++    },
+     "node_modules/ms": {
+       "version": "2.1.3",
+       "resolved": "https://registry.npmmirror.com/ms/-/ms-2.1.3.tgz",
+@@ -117,6 +126,16 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/pngjs": {
++      "version": "7.0.0",
++      "resolved": "https://registry.npmmirror.com/pngjs/-/pngjs-7.0.0.tgz",
++      "integrity": "sha512-LKWqWJRhstyYo9pGvgor/ivk2w94eSjE3RGVuzLGlr3NmD8bf7RcYGze1mNdEHRP6TRP6rMuDHk5t44hnTRyow==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=14.19.0"
++      }
++    },
+     "node_modules/progress": {
+       "version": "2.0.3",
+       "resolved": "https://registry.npmmirror.com/progress/-/progress-2.0.3.tgz",
+diff --git a/package.json b/package.json
+index 4402458..2d76979 100644
+--- a/package.json
++++ b/package.json
+@@ -9,6 +9,8 @@
+   "author": "汤伊轲",
+   "license": "MIT",
+   "devDependencies": {
+-    "electron": "^45.0.0"
++    "electron": "^45.0.0",
++    "jpeg-js": "^0.4.4",
++    "pngjs": "^7.0.0"
+   }
+ }
+diff --git a/preload.js b/preload.js
+index 287e573..98049e3 100644
+--- a/preload.js
++++ b/preload.js
+@@ -14,10 +14,17 @@ contextBridge.exposeInMainWorld('pet', {
+   closeChat: () => ipcRenderer.send('close-chat'),
+   quit: () => ipcRenderer.send('quit'),
+   onToast: (cb) => ipcRenderer.on('toast', (_e, text) => cb(text)),
+-  onAnnounce: (cb) => ipcRenderer.on('announce', (_e, text, options) => cb(text, options || {})),
+   onState: (cb) => ipcRenderer.on('pet-state', (_e, state) => cb(state)),
++  onAnnounce: (cb) => ipcRenderer.on('announce', (_e, text, options) => cb(text, options || {})),
+   getState: () => ipcRenderer.invoke('pet-state-get'),
+   getHermesSnapshot: () => ipcRenderer.invoke('hermes-snapshot-get'),
++  getSessionHistory: () => ipcRenderer.invoke('session-history'),
++  sendHermesChat: (text) => ipcRenderer.invoke('session-chat', text),
++  createTask: (payload) => ipcRenderer.invoke('task-create', payload),
++  uploadTaskFile: (taskId, filePath) => ipcRenderer.invoke('task-upload', taskId, filePath),
++  getMemory: () => ipcRenderer.invoke('memory-get'),
++  getSkills: () => ipcRenderer.invoke('skills-get'),
++  interact: (zone) => ipcRenderer.send('pet-interact', zone),
+   getSettings: () => ipcRenderer.invoke('settings-get'),
+   saveSettings: (input) => ipcRenderer.invoke('settings-save', input),
+   getHistory: () => ipcRenderer.invoke('history-get'),
+diff --git a/renderer/chat.css b/renderer/chat.css
+index e931687..2bb339c 100644
+--- a/renderer/chat.css
++++ b/renderer/chat.css
+@@ -50,6 +50,7 @@ button:hover { border-color: #b8b2d6; background: #faf9ff; }
+ button:disabled { cursor: wait; opacity: 0.55; }
+ button.primary { border-color: var(--accent); color: #fff; background: var(--accent); }
+ button.quiet { color: var(--muted); background: transparent; }
++button.recording { border-color: #c25763; color: #fff; background: #c25763; }
+ 
+ main { height: calc(100vh - 78px); padding: 16px; }
+ .panel {
+@@ -80,6 +81,28 @@ input:focus, textarea:focus { border-color: #a79dd3; box-shadow: 0 0 0 3px var(-
+ .setup-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+ .check { display: flex; display: inline-flex; grid-template-columns: none; align-items: center; gap: 6px; }
+ .check input { width: auto; }
++.data-block { margin-top: 12px; }
++.data-block h3 { margin: 0 0 5px; font-size: 13px; }
++pre {
++  max-height: 190px;
++  margin: 0;
++  padding: 10px;
++  overflow: auto;
++  border: 1px solid var(--line);
++  border-radius: 6px;
++  background: #fbfbfe;
++  color: #57536b;
++  font: 12px/1.55 Consolas, "Microsoft YaHei", monospace;
++  white-space: pre-wrap;
++}
++details {
++  margin-top: 8px;
++  padding: 9px 10px;
++  border: 1px solid var(--line);
++  border-radius: 6px;
++  background: #fff;
++}
++summary { cursor: pointer; color: var(--accent); font-weight: 700; }
+ 
+ .chat-shell { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+ #messages {
+diff --git a/renderer/chat.html b/renderer/chat.html
+index f88ebbf..c62cf7f 100644
+--- a/renderer/chat.html
++++ b/renderer/chat.html
+@@ -13,6 +13,10 @@
+       <h1>Hermes <span id="connection-state">本地陪伴模式</span></h1>
+     </div>
+     <div class="window-actions">
++      <button id="task-btn" title="拖文件或创建任务">任务</button>
++      <button id="memory-btn" title="查看 Hermes 记忆">记忆</button>
++      <button id="skills-btn" title="查看 Hermes 技能">技能</button>
++      <button id="voice-btn" title="中文语音输入">听</button>
+       <button id="settings-btn" title="设置">设置</button>
+       <button id="hide-btn" title="隐藏窗口">—</button>
+       <button id="close-btn" title="关闭窗口">×</button>
+@@ -20,6 +24,16 @@
+   </header>
+ 
+   <main>
++    <section id="inspector" class="panel hidden">
++      <div class="panel-head">
++        <div>
++          <h2 id="inspector-title">Hermes 数据</h2>
++          <p id="inspector-hint">读取自 Hermes 本机目录</p>
++        </div>
++        <button id="inspector-close" class="quiet">收起</button>
++      </div>
++      <div id="inspector-content"></div>
++    </section>
+     <section id="setup" class="panel hidden">
+       <div class="panel-head">
+         <div>
+@@ -43,6 +57,26 @@
+       <div id="setup-msg" class="hint"></div>
+     </section>
+ 
++    <section id="task-modal" class="panel hidden">
++      <div class="panel-head">
++        <div>
++          <h2>派一个活给 Hermes</h2>
++          <p id="task-files">拖进来的文件会作为任务附件上传</p>
++        </div>
++        <button id="task-cancel" class="quiet">取消</button>
++      </div>
++      <div class="grid">
++        <label class="wide">任务标题<input id="task-title" maxlength="240" /></label>
++        <label class="wide">要做什么<textarea id="task-body" rows="3" placeholder="写清楚目标和验收标准"></textarea></label>
++        <label>执行人<select id="task-assignee"></select></label>
++        <label>优先级<select id="task-priority"><option value="0">普通</option><option value="1">重要</option><option value="2">紧急</option></select></label>
++      </div>
++      <div class="setup-foot">
++        <span id="task-msg" class="hint"></span>
++        <button id="task-submit" class="primary">确认派发</button>
++      </div>
++    </section>
++
+     <section id="chat" class="chat-shell">
+       <div id="messages"></div>
+       <div id="composer">
+diff --git a/renderer/chat.js b/renderer/chat.js
+index 413648a..495f7eb 100644
+--- a/renderer/chat.js
++++ b/renderer/chat.js
+@@ -1,5 +1,8 @@
+ const $ = (id) => document.getElementById(id);
+ let sending = false;
++let droppedFiles = [];
++let recognition = null;
++let listening = false;
+ 
+ function esc(value) {
+   return String(value == null ? '' : value).replace(/[&<>"]/g, (c) => ({
+@@ -20,7 +23,7 @@ function addMessage(role, text, at) {
+ function paintState(state) {
+   if (!state) return;
+   $('mood').textContent = `心情 ${state.mood}/100 · 好感 ${state.affection}/100`;
+-  $('connection-state').textContent = state.statusText || '待命';
++  $('connection-state').textContent = state.hermesText || state.statusText || 'Hermes 离线';
+ }
+ 
+ async function loadSettings() {
+@@ -43,7 +46,7 @@ async function send() {
+   addMessage('user', text, Date.now());
+   input.value = '';
+   try {
+-    const result = await window.pet.sendChat(text);
++    const result = await window.pet.sendHermesChat(text);
+     if (result.ok) addMessage('assistant', result.answer, Date.now());
+     else addMessage('assistant', result.error || '这条消息没有发出去。', Date.now());
+   } catch (error) {
+@@ -55,13 +58,134 @@ async function send() {
+   }
+ }
+ 
++function showInspector(title, content, hint = '读取自 Hermes 本机目录') {
++  $('inspector-title').textContent = title;
++  $('inspector-hint').textContent = hint;
++  $('inspector-content').innerHTML = content;
++  $('inspector').classList.remove('hidden');
++  $('setup').classList.add('hidden');
++  $('task-modal').classList.add('hidden');
++}
++
++function openMemory() {
++  window.pet.getMemory().then((data) => {
++    showInspector('Hermes 记忆', `
++      <div class="data-block"><h3>用户画像</h3><pre>${esc(data.user || '暂无')}</pre></div>
++      <div class="data-block"><h3>长期记忆</h3><pre>${esc(data.longTerm || '暂无')}</pre></div>`);
++  });
++}
++
++function openSkills() {
++  window.pet.getSkills().then((skills) => {
++    const html = (skills || []).length
++      ? skills.map((skill) => `<details><summary>${esc(skill.name)}</summary><pre>${esc(skill.content || '空技能')}</pre></details>`).join('')
++      : '<div class="hint">Hermes 技能目录里还没有可读的 SKILL.md</div>';
++    showInspector('Hermes 技能', html, '直接读取 Hermes 的 skills 目录，不另建一套技能系统');
++  });
++}
++
++async function openTaskModal(files = []) {
++  droppedFiles = files.filter(Boolean);
++  const snapshot = await window.pet.getHermesSnapshot();
++  const assignees = (snapshot.agents || []).map((agent) => agent.name);
++  $('task-assignee').innerHTML = (assignees.length ? assignees : ['default'])
++    .map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join('');
++  $('task-files').textContent = droppedFiles.length
++    ? `附件：${droppedFiles.map((file) => file.name).join('、')}`
++    : '没有附件，直接创建文字任务';
++  if (!$('task-title').value && droppedFiles[0]) $('task-title').value = `处理：${droppedFiles[0].name}`;
++  $('task-modal').classList.remove('hidden');
++  $('inspector').classList.add('hidden');
++  $('setup').classList.add('hidden');
++  $('task-title').focus();
++}
++
++async function submitTask() {
++  const title = $('task-title').value.trim();
++  if (!title) {
++    $('task-msg').textContent = '先写一个任务标题';
++    return;
++  }
++  $('task-submit').disabled = true;
++  $('task-msg').textContent = '正在创建任务…';
++  try {
++    const created = await window.pet.createTask({
++      title,
++      body: $('task-body').value.trim(),
++      assignee: $('task-assignee').value || null,
++      priority: Number($('task-priority').value)
++    });
++    if (!created.ok) throw new Error(created.error);
++    const task = created.task && created.task.task;
++    for (const file of droppedFiles) {
++      if (!file.path) throw new Error(`无法读取附件路径：${file.name}`);
++      const uploaded = await window.pet.uploadTaskFile(task.id, file.path);
++      if (!uploaded.ok) throw new Error(uploaded.error);
++    }
++    $('task-msg').textContent = `已派发${droppedFiles.length ? `，上传 ${droppedFiles.length} 个附件` : ''}`;
++    setTimeout(() => {
++      $('task-modal').classList.add('hidden');
++      $('task-title').value = '';
++      $('task-body').value = '';
++      droppedFiles = [];
++    }, 900);
++  } catch (error) {
++    $('task-msg').textContent = error.message || '任务创建失败';
++  } finally {
++    $('task-submit').disabled = false;
++  }
++}
++
++function setupVoice() {
++  const Engine = window.SpeechRecognition || window.webkitSpeechRecognition;
++  const button = $('voice-btn');
++  if (!Engine) {
++    button.title = '当前 Electron 没有可用的中文语音识别';
++    button.addEventListener('click', () => {
++      $('task-msg').textContent = '当前环境没有语音识别入口，先用文字输入';
++    });
++    return;
++  }
++  recognition = new Engine();
++  recognition.lang = 'zh-CN';
++  recognition.continuous = false;
++  recognition.interimResults = true;
++  recognition.onstart = () => {
++    listening = true;
++    button.classList.add('recording');
++    button.textContent = '停';
++    button.title = '停止听写';
++  };
++  recognition.onresult = (event) => {
++    let text = '';
++    for (let i = event.resultIndex; i < event.results.length; i++) {
++      text += event.results[i][0].transcript;
++    }
++    if (text) $('input').value = text;
++  };
++  recognition.onerror = (event) => {
++    $('input').placeholder = event.error === 'not-allowed' ? '麦克风权限被拒绝' : '语音识别失败，请改用文字';
++  };
++  recognition.onend = () => {
++    listening = false;
++    button.classList.remove('recording');
++    button.textContent = '听';
++    button.title = '中文语音输入';
++  };
++  button.addEventListener('click', () => {
++    if (listening) recognition.stop();
++    else recognition.start();
++  });
++}
++
+ async function init() {
+-  const history = await window.pet.getHistory();
+-  if (history.length) history.forEach((m) => addMessage(m.role, m.content, m.at));
+-  else addMessage('assistant', '我上线了。先用本地模式陪你，接入 DeepSeek 后我会保留这段对话。', Date.now());
++  const history = await window.pet.getSessionHistory();
++  if (history.entries && history.entries.length) history.entries.forEach((m) => addMessage(m.role, m.content, m.at));
++  else addMessage('assistant', 'Hermes 的 Bot Chat 目前还没有可显示的记录', Date.now());
+   await loadSettings();
+   paintState(await window.pet.getState());
+   $('input').focus();
++  setupVoice();
+ }
+ 
+ $('send').addEventListener('click', send);
+@@ -73,6 +197,12 @@ $('input').addEventListener('keydown', (e) => {
+ });
+ $('settings-btn').addEventListener('click', () => $('setup').classList.toggle('hidden'));
+ $('setup-close').addEventListener('click', () => $('setup').classList.add('hidden'));
++$('inspector-close').addEventListener('click', () => $('inspector').classList.add('hidden'));
++$('memory-btn').addEventListener('click', openMemory);
++$('skills-btn').addEventListener('click', openSkills);
++$('task-btn').addEventListener('click', () => openTaskModal());
++$('task-cancel').addEventListener('click', () => $('task-modal').classList.add('hidden'));
++$('task-submit').addEventListener('click', submitTask);
+ $('hide-btn').addEventListener('click', () => window.pet.hideChat());
+ $('close-btn').addEventListener('click', () => window.pet.closeChat());
+ $('save-settings').addEventListener('click', async () => {
+@@ -91,4 +221,11 @@ $('save-settings').addEventListener('click', async () => {
+   $('connection-state').textContent = saved.hasApiKey ? 'DeepSeek 已连接' : '本地陪伴模式';
+ });
+ window.pet.onState(paintState);
++window.pet.onAnnounce((text) => addMessage('assistant', text, Date.now()));
++document.addEventListener('dragover', (event) => event.preventDefault());
++document.addEventListener('drop', (event) => {
++  event.preventDefault();
++  const files = Array.from(event.dataTransfer?.files || []);
++  if (files.length) openTaskModal(files);
++});
+ init().catch((error) => addMessage('assistant', error.message || '初始化失败。', Date.now()));
+diff --git a/renderer/pet.js b/renderer/pet.js
+index 91e1fa7..f89342d 100644
+--- a/renderer/pet.js
++++ b/renderer/pet.js
+@@ -106,7 +106,15 @@ window.addEventListener('mouseup', () => {
+   if (moved < 5) {
+     petEl.classList.add('hop');
+     setTimeout(() => petEl.classList.remove('hop'), 520);
+-    say(LINES[Math.floor(Math.random() * LINES.length)]);
++    const r = petEl.getBoundingClientRect();
++    const x = (lastX - r.left) / r.width;
++    const y = (lastY - r.top) / r.height;
++    let zone = 'body';
++    if (y < 0.25) zone = 'head';
++    else if (y < 0.5 && x > 0.22 && x < 0.78) zone = 'face';
++    else if (y > 0.78) zone = 'feet';
++    else if (x < 0.2 || x > 0.8) zone = 'wing';
++    window.pet.interact(zone);
+   }
+ });
+ 
+diff --git a/shot.png b/shot.png
+index 6e26c8c..c3c8744 100644
+Binary files a/shot.png and b/shot.png differ

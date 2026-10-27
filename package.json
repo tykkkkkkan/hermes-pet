@@ -9,6 +9,8 @@
   "author": "汤伊轲",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^45.0.0"
+    "electron": "^45.0.0",
+    "jpeg-js": "^0.4.4",
+    "pngjs": "^7.0.0"
   }
 }

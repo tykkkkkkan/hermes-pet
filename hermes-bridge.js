@@ -3,6 +3,8 @@ const path = require('path');
 
 const HERMES_DIR = path.join(process.env.LOCALAPPDATA || '', 'hermes');
 const LEDGER_FILE = path.join(HERMES_DIR, 'spawn-ledger.json');
+const MEMORY_DIR = path.join(HERMES_DIR, 'memories');
+const SKILLS_DIR = path.join(HERMES_DIR, 'skills');
 
 function readJson(file, fallback) {
   try {
@@ -41,6 +43,138 @@ async function getJson(connection, endpoint) {
   });
   if (!response.ok) throw new Error(`${endpoint} 返回 ${response.status}`);
   return response.json();
+}
+
+async function postJson(connection, endpoint, body) {
+  const response = await fetch(`${connection.base}${endpoint}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${connection.token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body || {}),
+    signal: timeoutSignal(90000)
+  });
+  const raw = await response.text();
+  let data = {};
+  try { data = raw ? JSON.parse(raw) : {}; } catch { data = { detail: raw }; }
+  if (!response.ok) throw new Error(`${endpoint} 返回 ${response.status}：${data.detail || raw || '请求失败'}`);
+  return data;
+}
+
+async function getBotChatSession(connection) {
+  const listed = await getJson(connection, '/api/sessions?title=Bot%20Chat&include_hidden=true&limit=20');
+  const rows = Array.isArray(listed?.data) ? listed.data
+    : Array.isArray(listed?.sessions) ? listed.sessions : [];
+  const exact = rows.find((row) => row?.id && row.title === 'Bot Chat');
+  if (exact) return exact;
+
+  // headless serve 当前只开放既有会话，不能假设 POST /api/sessions 一定可用。
+  // 没有专属 Bot Chat 时复用 default profile 的活跃会话，保证桌宠和 Hermes 仍是同一条线。
+  const active = rows.find((row) => row?.id && row.is_active && (row.profile_name || row.profile) === 'default');
+  const fallback = rows
+    .filter((row) => row?.id && (row.profile_name || row.profile) === 'default')
+    .sort((a, b) => Number(b.last_active || 0) - Number(a.last_active || 0))[0];
+  const session = active || fallback;
+  if (session) return session;
+  throw new Error('Hermes 没有可用的 default 会话');
+}
+
+function normalizeSessionMessage(message) {
+  const content = message?.content;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map((part) => typeof part === 'string' ? part : part?.text || '').join('');
+  }
+  return '';
+}
+
+async function sessionHistory() {
+  const connection = await connect();
+  const session = await getBotChatSession(connection);
+  const result = await getJson(connection, `/api/sessions/${encodeURIComponent(session.id)}/messages?limit=200&order=latest`);
+  const rows = Array.isArray(result?.data) ? result.data
+    : Array.isArray(result?.messages) ? result.messages : [];
+  return {
+    sessionId: session.id,
+    entries: rows.reverse().map((message) => ({
+      role: message.role === 'user' ? 'user' : message.role === 'assistant' ? 'assistant' : 'system',
+      content: normalizeSessionMessage(message),
+      at: message.timestamp || Date.now()
+    })).filter((row) => row.content)
+  };
+}
+
+async function sessionChat(text) {
+  const connection = await connect();
+  const session = await getBotChatSession(connection);
+  const result = await postJson(connection, `/api/sessions/${encodeURIComponent(session.id)}/chat`, {
+    message: String(text || '').slice(0, 4000)
+  });
+  const message = result?.message || {};
+  return {
+    sessionId: session.id,
+    answer: normalizeSessionMessage(message) || String(result?.final_response || '').trim()
+  };
+}
+
+async function createTask(payload) {
+  const connection = await connect();
+  return postJson(connection, '/api/plugins/kanban/tasks', {
+    title: String(payload?.title || '').trim().slice(0, 240),
+    body: String(payload?.body || '').slice(0, 12000),
+    assignee: payload?.assignee || null,
+    priority: Number.isFinite(Number(payload?.priority)) ? Number(payload.priority) : 0,
+    workspace_kind: payload?.workspace_kind || null,
+    workspace_path: payload?.workspace_path || null,
+    skills: Array.isArray(payload?.skills) ? payload.skills.slice(0, 20) : null,
+    triage: !!payload?.triage
+  });
+}
+
+async function uploadAttachment(taskId, filePath) {
+  const connection = await connect();
+  const stat = fs.statSync(filePath);
+  if (!stat.isFile()) throw new Error('拖入的路径不是文件');
+  if (stat.size > 50 * 1024 * 1024) throw new Error('附件超过 Hermes 的 50 MB 限制');
+  const form = new FormData();
+  const bytes = fs.readFileSync(filePath);
+  form.append('file', new Blob([bytes]), path.basename(filePath));
+  form.append('uploaded_by', 'hermes-pet');
+  const response = await fetch(`${connection.base}/api/plugins/kanban/tasks/${encodeURIComponent(taskId)}/attachments`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${connection.token}` },
+    body: form,
+    signal: timeoutSignal(90000)
+  });
+  const raw = await response.text();
+  let data = {};
+  try { data = raw ? JSON.parse(raw) : {}; } catch { data = { detail: raw }; }
+  if (!response.ok) throw new Error(`附件上传失败：${data.detail || raw || response.status}`);
+  return data;
+}
+
+function readText(file, limit = 12000) {
+  try { return fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '').slice(0, limit); } catch { return ''; }
+}
+
+function memorySnapshot() {
+  return {
+    user: readText(path.join(MEMORY_DIR, 'USER.md')),
+    longTerm: readText(path.join(MEMORY_DIR, 'MEMORY.md'))
+  };
+}
+
+function skillSnapshot() {
+  const rows = [];
+  try {
+    for (const entry of fs.readdirSync(SKILLS_DIR, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const file = path.join(SKILLS_DIR, entry.name, 'SKILL.md');
+      if (fs.existsSync(file)) rows.push({ name: entry.name, content: readText(file, 5000) });
+    }
+  } catch {}
+  return rows.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function taskStatus(task, column) {
@@ -90,6 +224,7 @@ async function snapshot() {
     online: true,
     port: Number(connection.serve.port),
     gatewayState: status?.gateway_state || 'unknown',
+    gatewayBusy: status?.gateway_busy === true,
     activeAgents: Number(status?.active_agents) || normalized.running.length,
     activeSessions: Number(status?.active_sessions) || 0,
     components: status?.components || {},
@@ -98,4 +233,7 @@ async function snapshot() {
   };
 }
 
-module.exports = { HERMES_DIR, LEDGER_FILE, snapshot, normalizeBoard };
+module.exports = {
+  HERMES_DIR, LEDGER_FILE, snapshot, normalizeBoard, sessionHistory, sessionChat,
+  createTask, uploadAttachment, memorySnapshot, skillSnapshot
+};

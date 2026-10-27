@@ -50,6 +50,7 @@ button:hover { border-color: #b8b2d6; background: #faf9ff; }
 button:disabled { cursor: wait; opacity: 0.55; }
 button.primary { border-color: var(--accent); color: #fff; background: var(--accent); }
 button.quiet { color: var(--muted); background: transparent; }
+button.recording { border-color: #c25763; color: #fff; background: #c25763; }
 
 main { height: calc(100vh - 78px); padding: 16px; }
 .panel {
@@ -80,6 +81,28 @@ input:focus, textarea:focus { border-color: #a79dd3; box-shadow: 0 0 0 3px var(-
 .setup-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
 .check { display: flex; display: inline-flex; grid-template-columns: none; align-items: center; gap: 6px; }
 .check input { width: auto; }
+.data-block { margin-top: 12px; }
+.data-block h3 { margin: 0 0 5px; font-size: 13px; }
+pre {
+  max-height: 190px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fbfbfe;
+  color: #57536b;
+  font: 12px/1.55 Consolas, "Microsoft YaHei", monospace;
+  white-space: pre-wrap;
+}
+details {
+  margin-top: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+summary { cursor: pointer; color: var(--accent); font-weight: 700; }
 
 .chat-shell { height: 100%; display: flex; flex-direction: column; min-height: 0; }
 #messages {
@@ -101,6 +124,8 @@ input:focus, textarea:focus { border-color: #a79dd3; box-shadow: 0 0 0 3px var(-
   box-shadow: 0 4px 12px rgba(55, 48, 93, 0.05);
 }
 .mine .message-body { border-color: #dcd6f4; background: var(--accent-soft); }
+.read-message { margin: 3px 0 0; padding: 3px 7px; border-color: transparent; color: var(--muted); background: transparent; font-size: 11px; }
+.read-message:hover { color: var(--accent); background: var(--accent-soft); }
 #composer { padding-top: 10px; border-top: 1px solid var(--line); }
 #input { min-height: 58px; max-height: 140px; }
 .composer-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 7px; }

@@ -1,0 +1,6 @@
+{
+  "head": { "left": 0.22, "top": 0.02, "right": 0.78, "bottom": 0.27 },
+  "face": { "left": 0.25, "top": 0.27, "right": 0.75, "bottom": 0.52 },
+  "body": { "left": 0.18, "top": 0.52, "right": 0.82, "bottom": 0.82 },
+  "feet": { "left": 0.20, "top": 0.82, "right": 0.80, "bottom": 0.99 }
+}

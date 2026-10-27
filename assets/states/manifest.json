@@ -1,0 +1,154 @@
+{
+  "generatedAt": "2026-10-27T16:16:33.134Z",
+  "source": "D:/06-AI协作/WorkBuddy/产出",
+  "canvas": {
+    "body": {
+      "w": 1024,
+      "h": 1024
+    }
+  },
+  "body": {
+    "idle": "body/idle.png"
+  },
+  "face": {
+    "idle": "face/expr_1_idle.png",
+    "happy": "face/expr_2_happy.png",
+    "sleepy": "face/expr_3_sleepy.png",
+    "thinking": "face/expr_4_thinking.png",
+    "angry": "face/expr_5_angry.png",
+    "cry": "face/expr_6_cry.png"
+  },
+  "shots": {
+    "done": "shots/done.png",
+    "rest": "shots/rest.png",
+    "work": "shots/work.png",
+    "trust": "shots/trust.png",
+    "dispatch": "shots/dispatch.png",
+    "memory": "shots/memory.png"
+  },
+  "anchors": {
+    "foot": [
+      0.5,
+      0.9492
+    ],
+    "headTop": [
+      0.5,
+      0.1494
+    ],
+    "charHeightFrac": 0.7998
+  },
+  "notes": [
+    "立体化方式：去底清理 + 清晰度（梯度加权）+ 凹陷遮蔽 + 左上主光 + 暗部边缘光 + 底部沉降，纯像素运算，未改动人物造型。",
+    "浅色角色不能靠加光提立体感——白发和白翅膀会被烧成白团，所以边缘光只作用于亮度 < 0.55 的暗部。",
+    "原图腿缝里有 8161px 纯白不透明像素、脚下有 1906px 浅灰假影子，深色壁纸上分别是白楔子和白斑，已清除。",
+    "face/*.png 六张共用同一裁切框，同样做了轻量立体化，切表情不跳位。",
+    "shots/*.png 也做了轻量立体化（清晰度 0.45 / 边缘光 0.22 / 不做沉降），保留原构图与手写标题。",
+    "fx/*.png 按 layers 顺序叠加即得桌面立体效果；锚点 foot 为脚底中心。",
+    "参考仓库 deepseek-fish-pet 的桌面呈现其实是单张平面 PNG + 挤压拉伸动画，不是真 3D，见 docs/指令-03-立体化接入.md。"
+  ],
+  "fx": {
+    "shadow": "fx/shadow.png",
+    "contact": "fx/contact.png",
+    "halo": "fx/halo.png"
+  },
+  "layers": [
+    {
+      "src": "fx/halo.png",
+      "blend": "screen",
+      "opacity": 0.55,
+      "note": "背后泛光，随呼吸轻微缩放"
+    },
+    {
+      "src": "fx/shadow.png",
+      "blend": "normal",
+      "opacity": 1,
+      "note": "压扁贴地的整体落影，随呼吸缩放变淡"
+    },
+    {
+      "src": "body/idle.png",
+      "blend": "normal",
+      "opacity": 1,
+      "note": "主体，已烘焙清晰度/遮蔽/暗部边缘光"
+    },
+    {
+      "src": "body/idle.png",
+      "blend": "screen",
+      "opacity": "0.85（用 alpha 做遮罩）",
+      "note": "玻璃高光扫过，用主图 alpha 当 mask 叠一条移动的白色斜带"
+    },
+    {
+      "src": "fx/contact.png",
+      "blend": "normal",
+      "opacity": 1,
+      "note": "贴地接触影，压在最上层底部"
+    }
+  ],
+  "shotMeta": {
+    "dispatch": {
+      "w": 720,
+      "h": 720,
+      "bbox": [
+        50,
+        34,
+        700,
+        719
+      ],
+      "charHeightFrac": 0.951
+    },
+    "done": {
+      "w": 720,
+      "h": 720,
+      "bbox": [
+        58,
+        26,
+        678,
+        713
+      ],
+      "charHeightFrac": 0.954
+    },
+    "memory": {
+      "w": 720,
+      "h": 720,
+      "bbox": [
+        118,
+        27,
+        614,
+        708
+      ],
+      "charHeightFrac": 0.946
+    },
+    "rest": {
+      "w": 720,
+      "h": 720,
+      "bbox": [
+        71,
+        47,
+        643,
+        690
+      ],
+      "charHeightFrac": 0.893
+    },
+    "trust": {
+      "w": 720,
+      "h": 720,
+      "bbox": [
+        108,
+        21,
+        600,
+        708
+      ],
+      "charHeightFrac": 0.954
+    },
+    "work": {
+      "w": 720,
+      "h": 720,
+      "bbox": [
+        3,
+        14,
+        717,
+        719
+      ],
+      "charHeightFrac": 0.979
+    }
+  }
+}

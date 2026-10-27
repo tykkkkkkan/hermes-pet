@@ -13,6 +13,11 @@
       <h1>Hermes <span id="connection-state">本地陪伴模式</span></h1>
     </div>
     <div class="window-actions">
+      <button id="task-btn" title="拖文件或创建任务">任务</button>
+      <button id="memory-btn" title="查看 Hermes 记忆">记忆</button>
+      <button id="skills-btn" title="查看 Hermes 技能">技能</button>
+      <button id="voice-btn" title="中文语音输入">听</button>
+      <button id="speak-btn" title="停止语音朗读">读</button>
       <button id="settings-btn" title="设置">设置</button>
       <button id="hide-btn" title="隐藏窗口">—</button>
       <button id="close-btn" title="关闭窗口">×</button>
@@ -20,6 +25,16 @@
   </header>
 
   <main>
+    <section id="inspector" class="panel hidden">
+      <div class="panel-head">
+        <div>
+          <h2 id="inspector-title">Hermes 数据</h2>
+          <p id="inspector-hint">读取自 Hermes 本机目录</p>
+        </div>
+        <button id="inspector-close" class="quiet">收起</button>
+      </div>
+      <div id="inspector-content"></div>
+    </section>
     <section id="setup" class="panel hidden">
       <div class="panel-head">
         <div>
@@ -41,6 +56,26 @@
         <button id="save-settings" class="primary">保存设置</button>
       </div>
       <div id="setup-msg" class="hint"></div>
+    </section>
+
+    <section id="task-modal" class="panel hidden">
+      <div class="panel-head">
+        <div>
+          <h2>派一个活给 Hermes</h2>
+          <p id="task-files">拖进来的文件会作为任务附件上传</p>
+        </div>
+        <button id="task-cancel" class="quiet">取消</button>
+      </div>
+      <div class="grid">
+        <label class="wide">任务标题<input id="task-title" maxlength="240" /></label>
+        <label class="wide">要做什么<textarea id="task-body" rows="3" placeholder="写清楚目标和验收标准"></textarea></label>
+        <label>执行人<select id="task-assignee"></select></label>
+        <label>优先级<select id="task-priority"><option value="0">普通</option><option value="1">重要</option><option value="2">紧急</option></select></label>
+      </div>
+      <div class="setup-foot">
+        <span id="task-msg" class="hint"></span>
+        <button id="task-submit" class="primary">确认派发</button>
+      </div>
     </section>
 
     <section id="chat" class="chat-shell">

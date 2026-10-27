@@ -1,4 +1,5 @@
 const petEl = document.getElementById('pet');
+const petHitArea = document.getElementById('pet-hit-area');
 const bubble = document.getElementById('bubble');
 const menu = document.getElementById('menu');
 const statePill = document.getElementById('state-pill');
@@ -49,6 +50,7 @@ function bubbleVisible() {
 let ignoring = false;
 let lastX = -1;
 let lastY = -1;
+let lastActivityAt = Date.now();
 
 function updateIgnore(x, y) {
   if (bubbleVisible() || menuOpen) {
@@ -56,7 +58,7 @@ function updateIgnore(x, y) {
     return;
   }
   if (x < 0 || y < 0) return;
-  const r = petEl.getBoundingClientRect();
+  const r = petHitArea.getBoundingClientRect();
   const inside = x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
   if (inside === ignoring) {
     ignoring = !inside;
@@ -67,6 +69,15 @@ function updateIgnore(x, y) {
 window.addEventListener('mousemove', (e) => {
   lastX = e.clientX;
   lastY = e.clientY;
+  const hit = petHitArea.getBoundingClientRect();
+  if (e.clientX >= hit.left && e.clientX <= hit.right && e.clientY >= hit.top && e.clientY <= hit.bottom) {
+    lastActivityAt = Date.now();
+  }
+  const bounds = petEl.getBoundingClientRect();
+  const lookX = Math.max(-1, Math.min(1, (e.clientX - (bounds.left + bounds.width / 2)) / (bounds.width / 2)));
+  const lookY = Math.max(-1, Math.min(1, (e.clientY - (bounds.top + bounds.height / 2)) / (bounds.height / 2)));
+  petEl.style.setProperty('--look-x', `${(lookX * 1.5).toFixed(1)}px`);
+  petEl.style.setProperty('--look-y', `${(lookY * 1.2).toFixed(1)}px`);
   if (dragging) return;
   updateIgnore(e.clientX, e.clientY);
 });
@@ -77,13 +88,23 @@ let moved = 0;
 let lastSX = 0;
 let lastSY = 0;
 
-petEl.addEventListener('mousedown', (e) => {
+function hitPetRegion(x, y) {
+  const regions = window.pet.regions || {};
+  for (const zone of ['head', 'face', 'feet', 'body']) {
+    const area = regions[zone];
+    if (area && x >= area.left && x <= area.right && y >= area.top && y <= area.bottom) return zone;
+  }
+  return 'body';
+}
+
+petHitArea.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
+  lastActivityAt = Date.now();
   dragging = true;
   moved = 0;
   lastSX = e.screenX;
   lastSY = e.screenY;
-  petEl.style.animationPlayState = 'paused';
+    petEl.style.animationPlayState = 'paused';
   e.preventDefault();
 });
 
@@ -102,12 +123,50 @@ window.addEventListener('mousemove', (e) => {
 window.addEventListener('mouseup', () => {
   if (!dragging) return;
   dragging = false;
-  petEl.style.animationPlayState = '';
+    petEl.style.animationPlayState = '';
   if (moved < 5) {
     petEl.classList.add('hop');
     setTimeout(() => petEl.classList.remove('hop'), 520);
-    say(LINES[Math.floor(Math.random() * LINES.length)]);
+    const r = petHitArea.getBoundingClientRect();
+    const x = (lastX - r.left) / r.width;
+    const y = (lastY - r.top) / r.height;
+    window.pet.interact(hitPetRegion(x, y));
   }
+});
+
+/* ---------------- 拖文件创建 Hermes 任务 ---------------- */
+petHitArea.addEventListener('dragenter', (event) => {
+  event.preventDefault();
+  petEl.classList.add('drop-target');
+});
+petHitArea.addEventListener('dragover', (event) => {
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+});
+petHitArea.addEventListener('dragleave', (event) => {
+  if (!petHitArea.contains(event.relatedTarget)) petEl.classList.remove('drop-target');
+});
+petHitArea.addEventListener('drop', async (event) => {
+  event.preventDefault();
+  petEl.classList.remove('drop-target');
+  const files = Array.from(event.dataTransfer?.files || []).filter((file) => file.path);
+  if (!files.length) return say('没拿到文件路径，无法派发。打开聊天窗也能创建任务。', 5000);
+  const title = files.length === 1 ? files[0].name : `处理 ${files.length} 个文件`;
+  say(`收到「${title}」，正在交给 Hermes…`, 8000);
+  const created = await window.pet.createTask({
+    title,
+    body: `请处理拖入的文件：${files.map((file) => file.name).join('、')}`,
+    triage: true
+  });
+  if (!created?.ok) return say(`任务没建成：${created?.error || 'Hermes 暂不可用'}`, 6500);
+  const task = created.task?.task || created.task || {};
+  const taskId = task.id;
+  if (taskId == null) return say('任务已创建，但 Hermes 没返回任务编号，附件未上传。', 6500);
+  for (const file of files) {
+    const uploaded = await window.pet.uploadTaskFile(taskId, file.path);
+    if (!uploaded?.ok) return say(`任务已建成，但「${file.name}」上传失败：${uploaded?.error || '未知错误'}`, 6500);
+  }
+  say(`「${title}」已派发，${files.length} 个附件已交给 Hermes。`, 5200);
 });
 
 /* ---------------- 右键菜单 ---------------- */
@@ -119,6 +178,7 @@ function paintState(state) {
   statePill.dataset.state = s.status || 'idle';
   stateDot.dataset.state = s.status || 'idle';
   petEl.dataset.state = s.status || 'idle';
+  petEl.dataset.emotion = s.emotion || '平静';
   petEl.classList.toggle('thinking', s.status === 'thinking');
   petEl.classList.toggle('working', s.status === 'working');
   petEl.classList.toggle('success', s.status === 'success');
@@ -132,6 +192,7 @@ function paintState(state) {
   panelQueue.textContent = (s.queue?.todo || 0) + (s.queue?.ready || 0) + (s.queue?.scheduled || 0);
   panelTask.textContent = s.currentTask ? `当前：${s.currentTask.title}${s.currentTask.assignee ? ` · ${s.currentTask.assignee}` : ''}` : '当前没有执行中的任务';
   panelAgents.innerHTML = (s.agents || []).map((agent) => `<span class="${agent.status}">${agent.name}${agent.status === 'working' ? ' · 工作中' : ' · 空闲'}</span>`).join('');
+  if (s.status !== 'idle') petEl.classList.remove('drowsy');
 }
 
 window.pet.onState(paintState);
@@ -215,6 +276,15 @@ function idleLoop() {
   }, wait);
 }
 idleLoop();
+setInterval(() => {
+  const idleFor = Date.now() - lastActivityAt;
+  const isCalm = petEl.dataset.state === 'idle' && !dragging && !bubbleVisible();
+  petEl.classList.toggle('drowsy', isCalm && idleFor >= 20 * 60000);
+}, 30000);
+petHitArea.addEventListener('mouseenter', () => {
+  lastActivityAt = Date.now();
+  petEl.classList.remove('drowsy');
+});
 
 /* ---------------- 托盘消息 ---------------- */
 window.pet.onToast((text) => say(text, 1800));

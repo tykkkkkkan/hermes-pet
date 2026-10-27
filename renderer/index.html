@@ -22,7 +22,14 @@
       <div id="panel-task"></div>
       <div id="panel-agents"></div>
     </div>
-    <img id="pet" src="../assets/hermes-chibi.png" alt="Hermes" draggable="false" />
+    <div id="pet" aria-label="赫尔墨兹桌宠">
+      <img class="pet-layer pet-halo" src="../assets/states/fx/halo.png" alt="" draggable="false" />
+      <img class="pet-layer pet-cast" src="../assets/states/fx/shadow.png" alt="" draggable="false" />
+      <img class="pet-layer pet-body" src="../assets/states/body/idle.png" alt="赫尔墨兹" draggable="false" />
+      <div class="pet-layer pet-gloss" aria-hidden="true"></div>
+      <img class="pet-layer pet-contact" src="../assets/states/fx/contact.png" alt="" draggable="false" />
+      <div id="pet-hit-area" aria-hidden="true"></div>
+    </div>
     <div id="menu" class="hidden">
       <div class="mi emphasis" data-act="chat">打开对话</div>
       <div class="mi" data-act="talk">说句话</div>
