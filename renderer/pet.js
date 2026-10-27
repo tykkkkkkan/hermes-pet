@@ -1,4 +1,5 @@
 const petEl = document.getElementById('pet');
+const petFace = document.getElementById('pet-face');
 const petHitArea = document.getElementById('pet-hit-area');
 const bubble = document.getElementById('bubble');
 const menu = document.getElementById('menu');
@@ -179,6 +180,15 @@ function paintState(state) {
   stateDot.dataset.state = s.status || 'idle';
   petEl.dataset.state = s.status || 'idle';
   petEl.dataset.emotion = s.emotion || '平静';
+  const faceByState = {
+    idle: 'idle', success: 'happy', sleep: 'sleepy',
+    thinking: 'thinking', working: 'thinking', error: 'angry'
+  };
+  const face = ['idle', 'happy', 'sleepy', 'thinking', 'angry', 'cry'].includes(s.face)
+    ? s.face
+    : faceByState[s.status] || 'idle';
+  petEl.dataset.face = s.status === 'error' && (s.failureSeverity === 'high' || s.mood <= 25) ? 'cry' : face;
+  petFace.src = window.pet.faceSources?.[petEl.dataset.face] || window.pet.faceSources?.idle || petFace.src;
   petEl.classList.toggle('thinking', s.status === 'thinking');
   petEl.classList.toggle('working', s.status === 'working');
   petEl.classList.toggle('success', s.status === 'success');

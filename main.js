@@ -17,6 +17,7 @@ let chatWin = null;
 let topMost = true;
 let chatBusy = false;
 let hermesTimer = null;
+let hermesPollInFlight = false;
 let previousHermes = null;
 let successUntil = 0;
 let persona = readJson(PERSONA_FILE, {});
@@ -56,19 +57,8 @@ function readJson(file, fallback) {
   }
 }
 
-function applyEmotionEvent(event, { switchAddress = true } = {}) {
+function applyEmotionEvent(event) {
   petState = petEmotion.applyEvent(petState, event);
-  if (switchAddress) {
-    const pool = Array.isArray(persona?.address?.pool) ? persona.address.pool : [];
-    petState.addressHistory = Array.isArray(petState.addressHistory) ? petState.addressHistory : [];
-    const nextAddress = petEmotion.chooseAddress(
-      petState.emotion, petState.address, pool, petState.addressHistory
-    );
-    if (nextAddress !== petState.address) {
-      petState.address = nextAddress;
-      petState.addressHistory = [...petState.addressHistory, nextAddress].slice(-2);
-    }
-  }
 }
 
 function refreshEmotionClock(now = Date.now()) {
@@ -100,20 +90,7 @@ function trackUserEmotion(text) {
 }
 
 function statusFromSnapshot(snapshot) {
-  if (!snapshot?.online) return { status: 'error', statusText: '离线' };
-  const failedTasks = (snapshot.tasks || []).filter((task) => petRuntime.isFailureStatus(task.status));
-  if ((snapshot.blocked || []).length || failedTasks.length) return { status: 'error', statusText: '有任务受阻或失败' };
-  if ((snapshot.running || []).length) return { status: 'working', statusText: '执行中' };
-  if (snapshot.gatewayBusy) return { status: 'thinking', statusText: '思考中' };
-  if (successUntil > Date.now()) return { status: 'success', statusText: '刚刚完成' };
-  if ((snapshot.review || []).length) return { status: 'success', statusText: '待验收' };
-  const hour = new Date().getHours();
-  if (hour >= 1 && hour < 8) return { status: 'sleep', statusText: '休眠' };
-  return { status: 'idle', statusText: '待命' };
-}
-
-function taskMap(snapshot) {
-  return new Map((snapshot?.tasks || []).filter((task) => task.id != null).map((task) => [String(task.id), task]));
+  return petRuntime.deriveStatus(snapshot, { now: Date.now(), successUntil });
 }
 
 function taskTitle(task) {
@@ -126,6 +103,7 @@ function announce(text, options = {}) {
     taskResult: options.taskResult === true,
     userInitiated: options.userInitiated === true
   })) return;
+  text = prepareUtterance(text);
   if (win && !win.isDestroyed()) win.webContents.send('announce', text, options);
   if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.send('announce', text, options);
   if (options.notify && Notification.isSupported()) {
@@ -133,34 +111,39 @@ function announce(text, options = {}) {
   }
 }
 
+function prepareUtterance(text) {
+  const pool = Array.isArray(persona?.address?.pool) ? persona.address.pool : [];
+  const history = Array.isArray(petState.addressHistory) ? petState.addressHistory : [];
+  const previous = petState.address || '大哥';
+  const address = petEmotion.chooseAddress(petState.emotion, previous, pool, history);
+  if (address !== previous) {
+    petState.address = address;
+    petState.addressHistory = [...history, address].slice(-2);
+  }
+  let result = String(text || '').replaceAll('{address}', petState.address || '大哥');
+  const knownAddresses = pool.map((item) => item?.word).filter(Boolean);
+  const prefix = new RegExp(`^(?:${knownAddresses.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})[，,、：:\\s]+`);
+  const startsWithAddress = prefix.test(result);
+  if (address !== previous) {
+    result = startsWithAddress ? result.replace(prefix, `${address}，`) : `${address}，${result}`;
+  } else if (startsWithAddress) {
+    result = result.replace(prefix, `${address}，`);
+  }
+  return result;
+}
+
 function interactionLine(zone, mood) {
-  const address = petState.address || '大哥';
   const region = persona.touchReactions?.[zone] || persona.touchReactions?.body;
   const moodKey = mood >= 45 ? 'good' : 'bad';
-  return String(region?.[moodKey] || `${address}，有事直说，别只戳我`)
-    .replaceAll('{address}', address);
+  return String(region?.[moodKey] || '{address}，有事直说，别只戳我');
 }
 
 function applyHermesSnapshot(snapshot) {
-  const next = snapshot?.online ? snapshot : {
-    online: false,
-    activeAgents: 0,
-    running: [],
-    blocked: [],
-    review: [],
-    counts: { todo: 0, ready: 0, scheduled: 0, running: 0, blocked: 0, review: 0, done: 0 },
-    currentTask: null,
-    agents: [],
-    checkedAt: Date.now()
-  };
+  const next = petRuntime.normalizeSnapshot(snapshot);
+  const transitions = petRuntime.taskTransitions(previousHermes, next);
   if (previousHermes) {
-    const beforeTasks = taskMap(previousHermes);
-    const completed = (next.tasks || []).some((task) => {
-      const old = beforeTasks.get(String(task.id));
-      return task.status === 'done' && old && old.status !== 'done';
-    });
-    if (completed) successUntil = Date.now() + 4500;
-    if ((next.blocked || []).length || (next.tasks || []).some((task) => petRuntime.isFailureStatus(task.status))) successUntil = 0;
+    if (transitions.some(({ task }) => task.status === 'done')) successUntil = Date.now() + 4500;
+    if (transitions.some(({ task }) => petRuntime.isFailureStatus(task.status))) successUntil = 0;
   }
   const stateChange = statusFromSnapshot(next);
   const statusChanged = !previousHermes || stateChange.status !== petState.status;
@@ -184,26 +167,22 @@ function applyHermesSnapshot(snapshot) {
   pushPetState();
 
   if (previousHermes) {
-    const before = taskMap(previousHermes);
-    const after = taskMap(next);
-    for (const [id, task] of after) {
-      const old = before.get(id);
-      if (!old || old.status === task.status) continue;
+    for (const { task } of transitions) {
       if (task.status === 'done') {
         applyEmotionEvent('success');
         petState.mood = Math.min(100, petState.mood + 2);
-        announce(`${petState.address}，${taskTitle(task)} 完成了，验收一下`, { notify: true, kind: 'success', taskResult: true });
+        announce(`{address}，${taskTitle(task)} 完成了，验收一下`, { notify: true, kind: 'success', taskResult: true });
       } else if (petRuntime.isFailureStatus(task.status)) {
         applyEmotionEvent('failure');
         petState.mood = Math.max(0, petState.mood - 1);
         const resultWord = task.status === 'blocked' ? '受阻' : '失败';
-        announce(`${petState.address}，${taskTitle(task)} ${resultWord}了。先别急，我把问题盯住`, { notify: true, kind: 'error', taskResult: true });
+        announce(`{address}，${taskTitle(task)} ${resultWord}了。先别急，我把问题盯住`, { notify: true, kind: 'error', taskResult: true });
       }
     }
     if (previousHermes.online && !next.online) {
-      announce(`${petState.address}，Hermes 服务断了，我先安静等它回来`, { notify: true, kind: 'error' });
+      announce('{address}，Hermes 服务断了，我先安静等它回来', { notify: true, kind: 'error' });
     } else if (!previousHermes.online && next.online) {
-      announce(`${petState.address}，Hermes 回来了，现在在线`, { notify: false, kind: 'success' });
+      announce('{address}，Hermes 回来了，现在在线', { notify: false, kind: 'success' });
     }
   }
   previousHermes = next;
@@ -211,10 +190,14 @@ function applyHermesSnapshot(snapshot) {
 }
 
 async function pollHermes() {
+  if (hermesPollInFlight) return;
+  hermesPollInFlight = true;
   try {
     applyHermesSnapshot(await hermesBridge.snapshot());
   } catch {
     applyHermesSnapshot({ online: false });
+  } finally {
+    hermesPollInFlight = false;
   }
 }
 
@@ -576,10 +559,10 @@ ipcMain.handle('session-chat', async (_e, text) => {
     setTimeout(() => {
     if (!petState.hermesOnline || !petState.runningCount) setPetState(statusFromSnapshot(previousHermes || { online: false }).status);
     }, 1200);
-    return { ok: true, answer: result.answer, sessionId: result.sessionId };
+    return { ok: true, answer: prepareUtterance(result.answer), sessionId: result.sessionId };
   } catch (error) {
     setPetState('error', '会话异常');
-    return { ok: false, error: error?.message || 'Hermes 会话请求失败' };
+    return { ok: false, error: prepareUtterance(error?.message || 'Hermes 会话请求失败') };
   } finally {
     chatBusy = false;
   }
@@ -588,17 +571,17 @@ ipcMain.handle('task-create', async (_e, payload) => {
   try {
     const result = await hermesBridge.createTask(payload || {});
     const task = result?.task || {};
-    announce(`${petState.address || '大哥'}，任务「${task.title || payload?.title || '未命名'}」已经放进 Hermes`, { kind: 'success', userInitiated: true });
+    announce(`{address}，任务「${task.title || payload?.title || '未命名'}」已经放进 Hermes`, { kind: 'success', userInitiated: true });
     return { ok: true, task: result };
   } catch (error) {
-    return { ok: false, error: error?.message || '任务创建失败' };
+    return { ok: false, error: prepareUtterance(error?.message || '任务创建失败') };
   }
 });
 ipcMain.handle('task-upload', async (_e, taskId, filePath) => {
   try {
     return { ok: true, attachment: await hermesBridge.uploadAttachment(taskId, filePath) };
   } catch (error) {
-    return { ok: false, error: error?.message || '附件上传失败' };
+    return { ok: false, error: prepareUtterance(error?.message || '附件上传失败') };
   }
 });
 ipcMain.handle('memory-get', async () => ({
@@ -637,10 +620,10 @@ ipcMain.handle('chat-send', async (_e, text) => {
     adjustPetState(1, 2);
     setPetState('success');
     setTimeout(() => setPetState('idle'), 1600);
-    return { ok: true, answer };
+    return { ok: true, answer: prepareUtterance(answer) };
   } catch (error) {
     setPetState('error', '连接异常');
-    return { ok: false, error: error && error.message ? error.message : '模型请求失败' };
+    return { ok: false, error: prepareUtterance(error && error.message ? error.message : '模型请求失败') };
   } finally {
     chatBusy = false;
   }

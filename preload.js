@@ -1,8 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const petRegions = require('./pet-regions.json');
+const statesManifest = require('./assets/states/manifest.json');
 
 contextBridge.exposeInMainWorld('pet', {
   regions: petRegions,
+  faceSources: Object.fromEntries(Object.entries(statesManifest.face || {})
+    .map(([state, file]) => [state, `../assets/states/${file}`])),
   setIgnore: (ignore) => ipcRenderer.send('set-ignore', ignore),
   moveTo: (dx, dy) => ipcRenderer.send('move-to', dx, dy),
   snapCorner: () => ipcRenderer.send('snap-corner'),
