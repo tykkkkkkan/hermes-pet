@@ -1,6 +1,7 @@
 // 桌宠实机冒烟验收：真的把 Electron 窗口开起来，用 CDP 进去逐项验，验完关掉。
 // 用法：node test/e2e/pet-smoke.mjs   （可选 --port=9333 --keep 截图保留）
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,10 +11,73 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const PORT = Number((process.argv.find((a) => a.startsWith('--port=')) || '').split('=')[1]) || 9333;
 const KEEP = process.argv.includes('--keep');
 const LONG = process.argv.includes('--long');
+const DASHBOARD_FIXTURE = process.argv.includes('--dashboard-fixture');
 // 桌宠可能已经在跑（单例锁会让新实例直接退出），隔离一份 userData 才能并行验收
 const ISOLATED = process.argv.includes('--isolated');
 const TMP_PROFILE = path.join(ROOT, '.tmp', 'smoke-profile');
 const ART = path.join(ROOT, 'test/e2e/artifacts');
+const FIXTURE_LOCALAPPDATA = path.join(ROOT, '.tmp', 'dashboard-fixture-localappdata');
+
+let fixtureServer = null;
+let fixturePoll = 0;
+let fixturePort = 0;
+let fixturePhase = 0;
+
+function fixtureTasks() {
+  const make = (prefix, status, count) => Array.from({ length: count }, (_, index) => ({
+    id: `${prefix}-${index + 1}`,
+    title: `${prefix} 任务 ${index + 1}`,
+    assignee: index % 2 ? 'Agent B' : 'Agent A',
+    status
+  }));
+  const queued = make('排队', 'todo', 6);
+  queued[0].title = '这是一个特别特别长的任务标题用于验证单行省略号不会撑破仪表盘宽度';
+  queued.push({ id: 'transition-blocked', title: '会变成受阻的任务', assignee: 'Agent C', status: fixturePhase >= 1 ? 'blocked' : 'todo' });
+  queued.push({ id: 'transition-failed', title: '会变成失败的任务', assignee: 'Agent C', status: fixturePhase >= 2 ? 'failed' : 'todo' });
+  queued.push({ id: 'transition-review', title: '会进入验收的任务', assignee: 'Agent C', status: fixturePhase >= 3 ? 'review' : 'todo' });
+  return [
+    { name: 'running', tasks: make('执行中', 'running', 6) },
+    { name: 'blocked', tasks: make('受阻', 'blocked', 6) },
+    { name: 'review', tasks: make('待验收', 'review', 6) },
+    { name: 'todo', tasks: queued }
+  ];
+}
+
+async function startDashboardFixture() {
+  fixtureServer = createServer((request, response) => {
+    if (request.url?.startsWith('/fixture/phase')) {
+      const phase = Number(new URL(request.url, 'http://127.0.0.1').searchParams.get('value'));
+      fixturePhase = Math.max(0, Math.min(3, Number.isFinite(phase) ? phase : 0));
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ ok: true, phase: fixturePhase }));
+      return;
+    }
+    const body = request.url === '/api/plugins/kanban/board'
+      ? (fixturePoll += 1, { columns: fixtureTasks(), assignees: ['Agent A', 'Agent B', 'Agent C'], latest_event_id: fixturePoll })
+      : request.url === '/api/status'
+        ? { gateway_state: 'running', gateway_busy: false, active_agents: 2, active_sessions: 1, components: {} }
+        : null;
+    if (request.url === '/') {
+      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      response.end('<script>window.__HERMES_SESSION_TOKEN__="dashboard-fixture"</script>');
+      return;
+    }
+    if (!body) {
+      response.writeHead(404);
+      response.end('not found');
+      return;
+    }
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify(body));
+  });
+  await new Promise((resolve) => fixtureServer.listen(0, '127.0.0.1', resolve));
+  const address = fixtureServer.address();
+  fixturePort = address.port;
+  fs.mkdirSync(path.join(FIXTURE_LOCALAPPDATA, 'hermes'), { recursive: true });
+  fs.writeFileSync(path.join(FIXTURE_LOCALAPPDATA, 'hermes', 'spawn-ledger.json'), JSON.stringify([
+    { purpose: 'serve', port: address.port, startedAt: Date.now() }
+  ]));
+}
 
 const results = [];
 function check(name, ok, detail = '') {
@@ -79,6 +143,7 @@ async function capture(cdp, file) {
 
 async function main() {
   fs.mkdirSync(ART, { recursive: true });
+  if (DASHBOARD_FIXTURE) await startDashboardFixture();
   console.log(`启动 Electron（调试端口 ${PORT}）…`);
   const electronBin = createRequire(import.meta.url)('electron'); // 拿到真正的 electron 可执行文件路径
   const extraArgs = ISOLATED ? [`--user-data-dir=${TMP_PROFILE}`] : [];
@@ -88,7 +153,8 @@ async function main() {
     env: {
       ...process.env,
       ELECTRON_ENABLE_LOGGING: '1',
-      PET_DISABLE_POLL: '1',
+      PET_DISABLE_POLL: DASHBOARD_FIXTURE ? '0' : '1',
+      ...(DASHBOARD_FIXTURE ? { LOCALAPPDATA: FIXTURE_LOCALAPPDATA } : {}),
       ...(ISOLATED ? { PET_BRIDGE_FILE: path.join(ROOT, '.tmp', 'smoke-bridge.json') } : {}),
     },
   });
@@ -199,6 +265,64 @@ async function main() {
     const state = await evaluate(cdp, `window.pet.getState().then(s => ({ ok: true, keys: Object.keys(s || {}).slice(0, 12) })).catch(e => ({ ok: false, err: String(e) }))`);
     check('getState 能从主进程拿到状态', state?.ok, state?.ok ? state.keys.join(',') : state?.err);
 
+    const dashboard = await evaluate(cdp, `(() => {
+      const panel = document.getElementById('status-panel');
+      const tasks = document.getElementById('panel-tasks');
+      return {
+        present: !!panel && !!tasks,
+        empty: tasks?.textContent.includes('看板是空的，暂时没活派给我'),
+        total: tasks?.textContent.includes('总计 0 条'),
+        maxHeight: getComputedStyle(panel).maxHeight,
+        overflowY: getComputedStyle(panel).overflowY
+      };
+    })()`);
+    check(DASHBOARD_FIXTURE ? '仪表盘滚动容器就位' : '仪表盘离线空态与滚动容器就位', dashboard?.present
+      && (DASHBOARD_FIXTURE || (dashboard?.empty && dashboard?.total))
+      && dashboard?.maxHeight === '300px' && dashboard?.overflowY === 'auto', JSON.stringify(dashboard));
+
+    if (DASHBOARD_FIXTURE) {
+      await sleep(900);
+      const populated = await evaluate(cdp, `(() => {
+        const panel = document.getElementById('status-panel');
+        const tasks = document.getElementById('panel-tasks');
+        const groups = [...tasks.querySelectorAll('.t-group')].map((group) => ({
+          label: group.querySelector('.t-head')?.textContent || '',
+          items: group.querySelectorAll('li').length
+        }));
+        const first = tasks.querySelector('li > span');
+        return {
+          groups,
+          total: tasks.textContent.match(/总计\\s+(\\d+)\\s+条/)?.[1] || '',
+          longTitle: tasks.textContent.includes('特别特别长的任务标题'),
+          ellipsis: first ? getComputedStyle(first).textOverflow : '',
+          whiteSpace: first ? getComputedStyle(first).whiteSpace : '',
+          hidden: panel.classList.contains('hidden')
+        };
+      })()`);
+      check('仪表盘四组列表各最多五条且保留总数', populated?.groups.length === 4
+        && populated.groups.every((group) => group.items <= 5)
+        && populated.total === '27' && populated.longTitle
+        && populated.ellipsis === 'ellipsis' && populated.whiteSpace === 'nowrap', JSON.stringify(populated));
+      await evaluate(cdp, `document.getElementById('state-pill').click(); true`);
+      await sleep(100);
+      check('任务列表截图（长标题与四组）', await capture(cdp, path.join(ART, 'pet-dashboard-list.png')), 'test/e2e/artifacts/pet-dashboard-list.png');
+      await evaluate(cdp, `document.getElementById('status-panel').scrollTop = document.getElementById('status-panel').scrollHeight; true`);
+      check('任务列表截图（面板滚动）', await capture(cdp, path.join(ART, 'pet-dashboard-scroll.png')), 'test/e2e/artifacts/pet-dashboard-scroll.png');
+      await sleep(3500);
+      check('后台状态变化时面板不自动收起', await evaluate(cdp, `!document.getElementById('status-panel').classList.contains('hidden')`), 'status-panel 保持展开');
+      for (const [label, expected] of [['受阻播报', '受阻了'], ['失败播报', '失败了'], ['待验收播报', '做完了，等你验收']]) {
+        await fetch(`http://127.0.0.1:${fixturePort}/fixture/phase?value=${label === '受阻播报' ? 1 : label === '失败播报' ? 2 : 3}`);
+        await sleep(3400);
+        const text = await evaluate(cdp, `document.getElementById('bubble').textContent`);
+        console.log(`[播报] ${label}: ${text}`);
+        check(label + '文案', text.includes(expected), text);
+      }
+    } else {
+      await evaluate(cdp, `document.getElementById('state-pill').click(); true`);
+      check('离线空态截图', await capture(cdp, path.join(ART, 'pet-dashboard-empty.png')), 'test/e2e/artifacts/pet-dashboard-empty.png');
+      await evaluate(cdp, `document.getElementById('state-pill').click(); true`);
+    }
+
     // ---- 7. 状态切换后表情层真的换图 ----
     const statusFaces = await evaluate(cdp, `(async () => {
       const expected = { working: 'face-serious', thinking: 'face-serious', success: 'face-laugh', sleep: 'face-yawn', error: 'face-angry' };
@@ -298,6 +422,14 @@ async function main() {
     await evaluate(cdp, `window.pet.setStatus('idle'); true`);
 
     if (LONG) {
+      const mutations = evaluate(cdp, `new Promise((resolve) => {
+        const target = document.getElementById('panel-tasks');
+        if (!target) return resolve(-1);
+        let count = 0;
+        const observer = new MutationObserver(() => { count += 1; });
+        observer.observe(target, { childList: true, subtree: true, characterData: true, attributes: true });
+        setTimeout(() => { observer.disconnect(); resolve(count); }, 30000);
+      })`);
       await sleep(4500);
       const idleRun = await evaluate(cdp, `(async () => {
         const gesture = document.getElementById('pet-gesture');
@@ -321,6 +453,9 @@ async function main() {
       })()`);
       for (const item of idleRun || []) console.log(`[待机] ${item.action} elapsed=${item.elapsed.toFixed(0)}ms declared=${item.declared}ms Δ=${item.delta.toFixed(0)}ms`);
       check('待机四十二秒动作持续时间接近声明值', idleRun?.length >= 2 && idleRun.every((item) => Math.abs(item.delta) <= 100), JSON.stringify(idleRun));
+      const mutationCount = await mutations;
+      console.log(`[仪表盘] 30 秒 MutationObserver 变更次数=${mutationCount}`);
+      check('仪表盘数据未变时三十秒不重建 DOM', mutationCount === 0, `mutations=${mutationCount}`);
 
       const tripleLines = {};
       for (const zone of ['head', 'face', 'body', 'feet']) {
@@ -344,6 +479,11 @@ async function main() {
   } finally {
     try { cdp?.close(); } catch {}
     child.kill();
+    try { fixtureServer?.close(); } catch {}
+    fixtureServer = null;
+    if (DASHBOARD_FIXTURE) {
+      try { fs.rmSync(FIXTURE_LOCALAPPDATA, { recursive: true, force: true }); } catch {}
+    }
     if (!KEEP) await sleep(800);
   }
 
