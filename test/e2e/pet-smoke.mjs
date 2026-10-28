@@ -109,17 +109,21 @@ async function main() {
     check('preload API 全部就位', api?.missing.length === 0,
       api?.missing.join(',') || `${api?.present.length}/${api?.present.length}`);
 
-    // ---- 3. 只有一层人物立绘（防重影回归） ----
+    // ---- 3. 只有一层人物立绘 + 一层眨眼帧（防重影回归） ----
     const layersInDom = await evaluate(cdp, `(() => {
       const pet = document.getElementById('pet');
+      const blink = document.getElementById('pet-blink');
       return {
         images: pet ? pet.querySelectorAll('img.pet-layer').length : -1,
+        hasBlink: !!blink && blink.classList.contains('pet-blink-layer'),
+        blinkOpacity: blink ? getComputedStyle(blink).opacity : null,
         ghostFace: !!document.getElementById('pet-face'),
         gloss: !!document.querySelector('.pet-gloss')
       };
     })()`);
-    check('只渲染一层人物立绘，没有重影层', layersInDom?.images === 1 && !layersInDom?.ghostFace && !layersInDom?.gloss,
-      `立绘层 ${layersInDom?.images} 张`);
+    check('仅一层立绘 + 一层眨眼帧，静止时无重影', layersInDom?.images === 2 && layersInDom?.hasBlink
+      && Number(layersInDom?.blinkOpacity) === 0 && !layersInDom?.ghostFace && !layersInDom?.gloss,
+      `立绘层 ${layersInDom?.images} 张（含眨眼帧），眨眼帧静止透明度 ${layersInDom?.blinkOpacity}`);
 
     // ---- 4. 立绘分层图片没有 404 ----
     const layers = await evaluate(cdp, `(() => {

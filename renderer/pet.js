@@ -17,24 +17,25 @@ const panelTask = document.getElementById('panel-task');
 const panelAgents = document.getElementById('panel-agents');
 
 let currentSrc = petBody.getAttribute('src');
-const BLINK_SRC = '../assets/states/v2/aligned/state/state-idle-blink.png';
+const blinkLayer = document.getElementById('pet-blink');
 
-/* ---------------- 眨眼 ---------------- */
+/* ---------------- 眨眼（叠加帧交叉淡化，闭快睁慢，偶发双连眨） ---------------- */
 function blinkOnce() {
-  if (dragging || bubbleVisible()) return;
+  if (dragging || bubbleVisible() || menuOpen) return;
   if ((petEl.dataset.state || 'idle') !== 'idle') return;
-  const restore = currentSrc;
-  petBody.src = BLINK_SRC;
-  setTimeout(() => {
-    if (currentSrc === restore) petBody.src = restore;
-  }, 110);
+  petEl.classList.add('blink');
+  setTimeout(() => petEl.classList.remove('blink'), 95 + Math.random() * 45);
 }
 
-function blinkLoop() {
+function scheduleBlink() {
+  const base = 2800 + Math.random() * 3600;   // 2.8 ~ 6.4 秒一次
+  const doDouble = Math.random() < 0.2;        // 20% 概率双连眨
+  const gap = doDouble ? base : base + Math.random() * 2400;
   setTimeout(() => {
     blinkOnce();
-    blinkLoop();
-  }, 3800 + Math.random() * 5200);
+    if (doDouble) setTimeout(() => blinkOnce(), 240 + Math.random() * 160);
+    scheduleBlink();
+  }, gap);
 }
 
 /* ---------------- 台词 ---------------- */
@@ -53,6 +54,10 @@ function say(text, ms = 4200) {
   bubble.textContent = text;
   bubble.classList.remove('hidden');
   requestAnimationFrame(() => bubble.classList.add('show'));
+  petEl.classList.remove('squish');
+  void petEl.offsetWidth;
+  petEl.classList.add('squish');
+  setTimeout(() => petEl.classList.remove('squish'), 430);
   window.pet.setIgnore(false);
   clearTimeout(bubbleTimer);
   bubbleTimer = setTimeout(() => {
@@ -229,7 +234,10 @@ function paintState(state) {
   panelQueue.textContent = (s.queue?.todo || 0) + (s.queue?.ready || 0) + (s.queue?.scheduled || 0);
   panelTask.textContent = s.currentTask ? `当前：${s.currentTask.title}${s.currentTask.assignee ? ` · ${s.currentTask.assignee}` : ''}` : '当前没有执行中的任务';
   panelAgents.innerHTML = (s.agents || []).map((agent) => `<span class="${agent.status}">${agent.name}${agent.status === 'working' ? ' · 工作中' : ' · 空闲'}</span>`).join('');
-  if (s.status !== 'idle') petEl.classList.remove('drowsy');
+  if (s.status !== 'idle') {
+    petEl.classList.remove('drowsy');
+    petEl.classList.remove('blink');
+  }
 }
 
 window.pet.onState(paintState);
@@ -303,18 +311,19 @@ window.addEventListener('keydown', (e) => {
 
 /* ---------------- 待机小动作 ---------------- */
 function idleLoop() {
-  const wait = 7000 + Math.random() * 8000;
+  const wait = 6000 + Math.random() * 7000;
   setTimeout(() => {
-    if (!dragging && !bubbleVisible()) {
+    if (!dragging && !bubbleVisible() && (petEl.dataset.state || 'idle') === 'idle') {
       petEl.style.setProperty('--sway-dir', Math.random() < 0.5 ? '-1' : '1');
-      petEl.classList.add('sway');
-      setTimeout(() => petEl.classList.remove('sway'), 1900);
+      const action = Math.random() < 0.6 ? 'sway' : 'stretch';
+      petEl.classList.add(action);
+      setTimeout(() => petEl.classList.remove(action), action === 'sway' ? 1900 : 1600);
     }
     idleLoop();
-blinkLoop();
   }, wait);
 }
 idleLoop();
+scheduleBlink();
 setInterval(() => {
   const idleFor = Date.now() - lastActivityAt;
   const isCalm = petEl.dataset.state === 'idle' && !dragging && !bubbleVisible();

@@ -136,6 +136,16 @@ html, body {
   transform-origin: 50% 96%;
   transition: filter .7s ease;
 }
+/* 眨眼帧：平时完全透明，闭眼时快速淡入、睁眼时稍慢淡出，闭眼快睁眼慢更像真人 */
+.pet-blink-layer {
+  opacity: 0;
+  transition: opacity .09s ease-out;
+  will-change: opacity;
+}
+#pet.blink .pet-blink-layer {
+  opacity: 1;
+  transition: opacity .03s ease-in;
+}
 #pet-hit-area {
   position: absolute;
   left: 50%;
@@ -211,11 +221,28 @@ html, body {
   50% { transform: translateX(-50%) translateY(-4px) rotate(-0.9deg); }
 }
 @keyframes hop {
-  0%   { transform: translateX(-50%) translateY(0); }
-  35%  { transform: translateX(-50%) translateY(-16px) scale(1.03, 0.97); }
-  70%  { transform: translateX(-50%) translateY(2px) scale(0.98, 1.02); }
-  100% { transform: translateX(-50%) translateY(0); }
+  0%   { transform: translateX(-50%) translateY(0) scale(1, 1); }
+  20%  { transform: translateX(-50%) translateY(-3px) scale(1.05, 0.9); }
+  45%  { transform: translateX(-50%) translateY(-16px) scale(0.96, 1.05); }
+  70%  { transform: translateX(-50%) translateY(3px) scale(1.03, 0.93); }
+  85%  { transform: translateX(-50%) translateY(-1px) scale(0.99, 1.02); }
+  100% { transform: translateX(-50%) translateY(0) scale(1, 1); }
 }
+/* 果冻形变：说话/播报时轻轻一压一弹，往“大肥鱼”那种软糯手感靠 */
+@keyframes squish {
+  0%   { transform: translateX(-50%) scale(1, 1); }
+  35%  { transform: translateX(-50%) scale(1.05, 0.9); }
+  70%  { transform: translateX(-50%) scale(0.97, 1.04); }
+  100% { transform: translateX(-50%) scale(1, 1); }
+}
+#pet.squish { animation: squish .42s cubic-bezier(.36, .07, .19, .97); }
+/* 伸懒腰：待机时偶尔微微侧身拉伸一下 */
+@keyframes stretch {
+  0%   { transform: translateX(-50%) rotate(0) scaleY(1); }
+  40%  { transform: translateX(-50%) rotate(calc(-2deg * var(--sway-dir, 1))) translateY(-2px) scaleY(1.015); }
+  100% { transform: translateX(-50%) rotate(0) scaleY(1); }
+}
+#pet.stretch { animation: stretch 1.6s cubic-bezier(.36, .07, .19, .97); }
 
 /* ---------- 气泡 ---------- */
 #bubble {
