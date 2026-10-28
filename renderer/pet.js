@@ -1,5 +1,6 @@
 const petEl = document.getElementById('pet');
 const petBody = document.getElementById('pet-body');
+const gestureEl = document.getElementById('pet-gesture');
 const petHitArea = document.getElementById('pet-hit-area');
 const bubble = document.getElementById('bubble');
 const menu = document.getElementById('menu');
@@ -60,10 +61,10 @@ function say(text, ms = 4200, options = {}) {
   bubble.classList.remove('hidden');
   requestAnimationFrame(() => bubble.classList.add('show'));
   window.petLive2d?.speak();
-  petEl.classList.remove('squish');
+  gestureEl.classList.remove('squish');
   void petEl.offsetWidth;
-  petEl.classList.add('squish');
-  setTimeout(() => petEl.classList.remove('squish'), 430);
+  gestureEl.classList.add('squish');
+  setTimeout(() => gestureEl.classList.remove('squish'), 430);
   window.pet.setIgnore(false);
   clearTimeout(bubbleTimer);
   bubbleTimer = setTimeout(() => {
@@ -164,12 +165,13 @@ function endDrag(commit) {
   window.pet.dragEnd();
   petEl.style.animationPlayState = '';
   if (commit && moved < 5) {
-    petEl.classList.add('hop');
-    setTimeout(() => petEl.classList.remove('hop'), 520);
+    gestureEl.classList.add('hop');
+    setTimeout(() => gestureEl.classList.remove('hop'), 520);
     const r = petHitArea.getBoundingClientRect();
     const x = (lastX - r.left) / r.width;
     const y = (lastY - r.top) / r.height;
     const zone = hitPetRegion(x, y);
+    playAction(zone);
     window.petLive2d?.onInteract(zone);
     window.pet.interact(zone);
   }
@@ -243,14 +245,14 @@ function paintState(state) {
     currentSrc = nextSrc;
     petBody.src = nextSrc;
   }
-  petEl.classList.toggle('thinking', s.status === 'thinking');
-  petEl.classList.toggle('working', s.status === 'working');
-  petEl.classList.toggle('success', s.status === 'success');
-  petEl.classList.toggle('error', s.status === 'error');
-  petEl.classList.toggle('sleep', s.status === 'sleep');
+  gestureEl.classList.toggle('thinking', s.status === 'thinking');
+  gestureEl.classList.toggle('working', s.status === 'working');
+  gestureEl.classList.toggle('success', s.status === 'success');
+  gestureEl.classList.toggle('error', s.status === 'error');
+  gestureEl.classList.toggle('sleep', s.status === 'sleep');
   window.petLive2d?.setState(bodyState);
   panelOnline.textContent = s.hermesOnline ? `在线 · ${s.port ? `端口 ${s.port}` : '服务正常'}` : '离线（等待 Hermes 服务）';
-  panelEmotion.textContent = `${s.emotion || '平静'} · ${s.address || '大哥'}`;
+  panelEmotion.textContent = `${s.emotion || '平静'} · ${s.address || '好大爹'}`;
   panelRunning.textContent = s.runningCount || 0;
   panelReview.textContent = s.queue?.review || 0;
   panelBlocked.textContent = s.queue?.blocked || 0;
@@ -258,7 +260,7 @@ function paintState(state) {
   panelTask.textContent = s.currentTask ? `当前：${s.currentTask.title}${s.currentTask.assignee ? ` · ${s.currentTask.assignee}` : ''}` : '当前没有执行中的任务';
   panelAgents.innerHTML = (s.agents || []).map((agent) => `<span class="${agent.status}">${agent.name}${agent.status === 'working' ? ' · 工作中' : ' · 空闲'}</span>`).join('');
   if (s.status !== 'idle') {
-    petEl.classList.remove('drowsy');
+    gestureEl.classList.remove('drowsy');
     petEl.classList.remove('blink');
   }
 }
@@ -335,15 +337,56 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'F1') sayAddressed(LINES[0]);
 });
 
-/* ---------------- 待机小动作 ---------------- */
+/* ---------------- 互动动作与待机小动作 ---------------- */
+let lastActionId = '';
+let gestureTimer = null;
+let gestureAnimationHandler = null;
+
+function clearGesture() {
+  if (gestureTimer) clearTimeout(gestureTimer);
+  gestureTimer = null;
+  if (gestureAnimationHandler) gestureEl.removeEventListener('animationend', gestureAnimationHandler);
+  gestureAnimationHandler = null;
+  gestureEl.classList.remove('gesture-active');
+  delete gestureEl.dataset.action;
+}
+
+function spawnActionEffect(effect) {
+  if (!fxLayer || !effect) return;
+  const img = document.createElement('img');
+  img.className = 'fx-action';
+  img.src = `../assets/fx/png/fx-${effect}.png`;
+  img.alt = '';
+  img.draggable = false;
+  img.style.left = `${38 + Math.random() * 24}%`;
+  img.style.setProperty('--drift', `${(Math.random() * 30 - 15).toFixed(0)}px`);
+  fxLayer.appendChild(img);
+  setTimeout(() => img.remove(), 1500);
+}
+
+function playAction(group) {
+  const action = window.pet.chooseAction?.(group, lastActionId);
+  if (!action) return;
+  clearGesture();
+  lastActionId = action.id;
+  gestureEl.dataset.action = action.id;
+  gestureEl.style.setProperty('--gesture-ms', action.duration);
+  void gestureEl.offsetWidth;
+  gestureEl.classList.add('gesture-active');
+  spawnActionEffect(action.effect);
+  gestureAnimationHandler = (event) => {
+    if (event.target === gestureEl && event.animationName === action.animation) clearGesture();
+  };
+  gestureEl.addEventListener('animationend', gestureAnimationHandler);
+  gestureTimer = setTimeout(clearGesture, action.duration + 120);
+}
+
 function idleLoop() {
   const wait = 6000 + Math.random() * 7000;
   setTimeout(() => {
     if (!dragging && !bubbleVisible() && (petEl.dataset.state || 'idle') === 'idle') {
-      petEl.style.setProperty('--sway-dir', Math.random() < 0.5 ? '-1' : '1');
-      const action = Math.random() < 0.6 ? 'sway' : 'stretch';
-      petEl.classList.add(action);
-      setTimeout(() => petEl.classList.remove(action), action === 'sway' ? 1900 : 1600);
+      const group = ['idle', 'idle', 'playful', 'magic'][Math.floor(Math.random() * 4)];
+      playAction(group);
     }
     idleLoop();
   }, wait);
@@ -353,11 +396,11 @@ scheduleBlink();
 setInterval(() => {
   const idleFor = Date.now() - lastActivityAt;
   const isCalm = petEl.dataset.state === 'idle' && !dragging && !bubbleVisible();
-  petEl.classList.toggle('drowsy', isCalm && idleFor >= 20 * 60000);
+  gestureEl.classList.toggle('drowsy', isCalm && idleFor >= 20 * 60000);
 }, 30000);
 petHitArea.addEventListener('mouseenter', () => {
   lastActivityAt = Date.now();
-  petEl.classList.remove('drowsy');
+  gestureEl.classList.remove('drowsy');
 });
 
 /* ---------------- 托盘消息 ---------------- */
@@ -397,6 +440,7 @@ function petHead() {
   if (now - lastPetAt < 6000) return;
   lastPetAt = now;
   for (let i = 0; i < 3; i++) spawnHeart();
+  playAction('head');
   window.petLive2d?.onInteract('head');
   say(HEAD_LINES[Math.floor(Math.random() * HEAD_LINES.length)], 2400);
 }

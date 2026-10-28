@@ -17,6 +17,7 @@ const hermesBridge = require('./hermes-bridge');
 const petMemory = require('./memory');
 const petEmotion = require('./pet-emotion');
 const petRuntime = require('./pet-runtime');
+const { createTouchPicker } = require('./pet-interactions');
 
 const WIN_W = 340;
 const WIN_H = 500;
@@ -35,6 +36,7 @@ let successUntil = 0;
 let bridgeServer = null;
 let bridgeToken = '';
 let persona = readJson(PERSONA_FILE, {});
+const pickTouchLine = createTouchPicker(persona);
 let petState = {
   status: 'idle',
   statusText: '待命',
@@ -131,7 +133,7 @@ function announce(text, options = {}) {
     taskResult: options.taskResult === true,
     userInitiated: options.userInitiated === true
   })) return;
-  text = prepareUtterance(text);
+  text = prepareUtterance(text, { keepAddress: options.kind === 'interaction' });
   // 免打扰只静音、不拦消息；审批/需协助类可按设置例外放行
   const s = publicSettings();
   const muted = inDndWindow() && !(options.critical === true && s.dndAllowApproval);
@@ -152,16 +154,17 @@ function showSystemNotification(text) {
   }
 }
 
-function prepareUtterance(text) {
+function prepareUtterance(text, options = {}) {
   const pool = Array.isArray(persona?.address?.pool) ? persona.address.pool : [];
   const history = Array.isArray(petState.addressHistory) ? petState.addressHistory : [];
-  const previous = petState.address || '大哥';
-  const address = petEmotion.chooseAddress(petState.emotion, previous, pool, history);
+  const previous = petState.address || '好大爹';
+  // 互动回应不随机换称呼：连点几下就换一个名字，听着像好几个人在说话
+  const address = options.keepAddress ? previous : petEmotion.chooseAddress(petState.emotion, previous, pool, history);
   if (address !== previous) {
     petState.address = address;
     petState.addressHistory = [...history, address].slice(-2);
   }
-  let result = String(text || '').replaceAll('{address}', petState.address || '大哥');
+  let result = String(text || '').replaceAll('{address}', petState.address || '好大爹');
   const knownAddresses = pool.map((item) => item?.word).filter(Boolean);
   const prefix = new RegExp(`^(?:${knownAddresses.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})[，,、：:\\s]+`);
   const startsWithAddress = prefix.test(result);
@@ -171,12 +174,6 @@ function prepareUtterance(text) {
     result = result.replace(prefix, `${address}，`);
   }
   return result;
-}
-
-function interactionLine(zone, mood) {
-  const region = persona.touchReactions?.[zone] || persona.touchReactions?.body;
-  const moodKey = mood >= 45 ? 'good' : 'bad';
-  return String(region?.[moodKey] || '{address}，有事直说，别只戳我');
 }
 
 function bridgeFile() {
@@ -221,7 +218,7 @@ function bridgeState() {
 }
 
 function interactPet(zone) {
-  const line = interactionLine(String(zone || 'body'), petState.mood);
+  const line = pickTouchLine(String(zone || 'body'), petState.emotion, petState.mood);
   applyEmotionEvent('touched');
   petState.lastInteraction = Date.now();
   petState.mood = Math.min(100, petState.mood + 1);

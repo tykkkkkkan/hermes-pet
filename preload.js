@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const petRegions = require('./pet-regions.json');
 const { hitRegion } = require('./pet-regions');
+const petActions = require('./pet-actions');
 const statesRoot = path.join(__dirname, 'assets', 'states');
 const legacyManifest = path.join(statesRoot, 'manifest.json');
 const v2Manifest = path.join(statesRoot, 'v2', 'index.json');
@@ -35,6 +36,8 @@ const hasV2 = fs.existsSync(v2Manifest);
 
 contextBridge.exposeInMainWorld('pet', {
   regions: petRegions,
+  actions: petActions.ACTIONS,
+  chooseAction: (group, previousId) => petActions.chooseAction(group, previousId),
   hitRegion: (x, y) => hitRegion(x, y, petRegions),
   faceSources,
   stateSources: hasV2 ? stateSources : {},

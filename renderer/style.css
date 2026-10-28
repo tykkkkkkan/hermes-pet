@@ -114,6 +114,12 @@ html, body {
   will-change: transform;
 }
 
+#pet-gesture {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 96%;
+}
+
 .pet-layer {
   position: absolute;
   left: 50%;
@@ -134,13 +140,13 @@ html, body {
 }
 #pet-live2d-host canvas { display: block; }
 body[data-live2d="on"] #pet-inner { display: none; }
-body[data-live2d="on"] #pet,
-body[data-live2d="on"] #pet.thinking,
-body[data-live2d="on"] #pet.working,
-body[data-live2d="on"] #pet.success,
-body[data-live2d="on"] #pet.error,
-body[data-live2d="on"] #pet.sleep,
-body[data-live2d="on"] #pet.drowsy { animation: none; }
+body[data-live2d="on"] #pet-gesture,
+body[data-live2d="on"] #pet-gesture.thinking,
+body[data-live2d="on"] #pet-gesture.working,
+body[data-live2d="on"] #pet-gesture.success,
+body[data-live2d="on"] #pet-gesture.error,
+body[data-live2d="on"] #pet-gesture.sleep,
+body[data-live2d="on"] #pet-gesture.drowsy { animation: none; }
 
 .pet-halo {
   mix-blend-mode: screen;
@@ -198,16 +204,16 @@ body[data-live2d="on"] #pet.drowsy { animation: none; }
   100% { transform: translateX(-50%) rotate(0deg); }
 }
 
-#pet.hop {
+#pet-gesture.hop {
   animation: hop 0.5s ease-out;
 }
-#pet.thinking {
+#pet-gesture.thinking {
   animation: thinking 1.1s ease-in-out infinite;
 }
-#pet.working { animation: work 1.5s ease-in-out infinite; filter: drop-shadow(0 8px 12px rgba(72, 57, 138, 0.34)) saturate(1.08); }
-#pet.success { animation: success 0.8s ease-out; filter: drop-shadow(0 8px 12px rgba(47, 151, 176, 0.32)); }
-#pet.error { animation: error 0.9s ease-in-out infinite; filter: drop-shadow(0 8px 12px rgba(180, 64, 78, 0.32)) saturate(0.8); }
-#pet.sleep { animation: sleep 4.5s ease-in-out infinite; filter: grayscale(0.25) brightness(0.88) drop-shadow(0 8px 12px rgba(0, 0, 0, 0.2)); }
+#pet-gesture.working { animation: work 1.5s ease-in-out infinite; filter: drop-shadow(0 8px 12px rgba(72, 57, 138, 0.34)) saturate(1.08); }
+#pet-gesture.success { animation: success 0.8s ease-out; filter: drop-shadow(0 8px 12px rgba(47, 151, 176, 0.32)); }
+#pet-gesture.error { animation: error 0.9s ease-in-out infinite; filter: drop-shadow(0 8px 12px rgba(180, 64, 78, 0.34)) saturate(0.8); }
+#pet-gesture.sleep { animation: sleep 4.5s ease-in-out infinite; filter: grayscale(0.25) brightness(0.88) drop-shadow(0 8px 12px rgba(0, 0, 0, 0.2)); }
 #pet[data-emotion="开心"] .pet-body,
 #pet[data-emotion="得意"] .pet-body { filter: drop-shadow(0 4px 9px rgba(255, 178, 89, .34)) saturate(1.12); }
 #pet[data-emotion="犯困"] .pet-body,
@@ -215,7 +221,7 @@ body[data-live2d="on"] #pet.drowsy { animation: none; }
 #pet[data-emotion="有点烦"] .pet-body,
 #pet[data-emotion="闹别扭"] .pet-body { filter: saturate(.84) contrast(1.04) drop-shadow(0 4px 8px rgba(10, 16, 32, .22)); }
 #pet[data-emotion="兴奋"] .pet-body { filter: saturate(1.2) brightness(1.04) drop-shadow(0 4px 10px rgba(121, 104, 222, .36)); }
-#pet.drowsy { animation: sleep 4.5s ease-in-out infinite; }
+#pet-gesture.drowsy { animation: sleep 4.5s ease-in-out infinite; }
 @keyframes work {
   0%, 100% { transform: translateX(-50%) translateY(0) scale(1); }
   50% { transform: translateX(-50%) translateY(-3px) scale(1.012); }
@@ -253,14 +259,48 @@ body[data-live2d="on"] #pet.drowsy { animation: none; }
   70%  { transform: translateX(-50%) scale(0.97, 1.04); }
   100% { transform: translateX(-50%) scale(1, 1); }
 }
-#pet.squish { animation: squish .42s cubic-bezier(.36, .07, .19, .97); }
+#pet-gesture.squish { animation: squish .42s cubic-bezier(.36, .07, .19, .97); }
 /* 伸懒腰：待机时偶尔微微侧身拉伸一下 */
 @keyframes stretch {
   0%   { transform: translateX(-50%) rotate(0) scaleY(1); }
   40%  { transform: translateX(-50%) rotate(calc(-2deg * var(--sway-dir, 1))) translateY(-2px) scaleY(1.015); }
   100% { transform: translateX(-50%) rotate(0) scaleY(1); }
 }
-#pet.stretch { animation: stretch 1.6s cubic-bezier(.36, .07, .19, .97); }
+#pet-gesture.stretch { animation: stretch 1.6s cubic-bezier(.36, .07, .19, .97); }
+
+/* 15 个真动作：12 个热区动作 + 3 个陪伴动作。动作表提供动画名和时长。 */
+#pet-gesture.gesture-active { animation-duration: calc(var(--gesture-ms, 900) * 1ms); animation-fill-mode: both; }
+#pet-gesture.gesture-active[data-action="hat-check"] { animation-name: hatCheck; animation-timing-function: ease-out; }
+#pet-gesture.gesture-active[data-action="soft-lean"] { animation-name: softLean; animation-timing-function: cubic-bezier(.22, .61, .36, 1); }
+#pet-gesture.gesture-active[data-action="proud-bow"] { animation-name: proudBow; animation-timing-function: ease-in-out; }
+#pet-gesture.gesture-active[data-action="double-blink"] { animation-name: doubleBlink; animation-timing-function: ease-out; }
+#pet-gesture.gesture-active[data-action="look-away"] { animation-name: lookAway; animation-timing-function: ease-in-out; }
+#pet-gesture.gesture-active[data-action="startle"] { animation-name: startle; animation-timing-function: cubic-bezier(.2, .9, .3, 1); }
+#pet-gesture.gesture-active[data-action="jelly-bounce"] { animation-name: jellyBounce; animation-timing-function: cubic-bezier(.34, 1.56, .64, 1); }
+#pet-gesture.gesture-active[data-action="side-brace"] { animation-name: sideBrace; animation-timing-function: ease-out; }
+#pet-gesture.gesture-active[data-action="cape-flick"] { animation-name: capeFlick; animation-timing-function: ease-in-out; }
+#pet-gesture.gesture-active[data-action="quick-hop"] { animation-name: quickHop; animation-timing-function: cubic-bezier(.2, .8, .25, 1); }
+#pet-gesture.gesture-active[data-action="stumble"] { animation-name: stumble; animation-timing-function: cubic-bezier(.36, .07, .19, .97); }
+#pet-gesture.gesture-active[data-action="heel-tap"] { animation-name: heelTap; animation-timing-function: ease-in-out; }
+#pet-gesture.gesture-active[data-action="slow-yawn"] { animation-name: slowYawn; animation-timing-function: ease-in-out; }
+#pet-gesture.gesture-active[data-action="cheer"] { animation-name: cheer; animation-timing-function: cubic-bezier(.34, 1.56, .64, 1); }
+#pet-gesture.gesture-active[data-action="sparkle-cast"] { animation-name: sparkleCast; animation-timing-function: ease-out; }
+
+@keyframes hatCheck { 0%,100% { transform: rotate(0); } 35% { transform: rotate(-4deg) translateY(-2px); } 68% { transform: rotate(2deg) translateY(1px); } }
+@keyframes softLean { 0%,100% { transform: rotate(0) translateY(0); } 35% { transform: rotate(5deg) translateY(-4px); } 72% { transform: rotate(-2deg) translateY(1px); } }
+@keyframes proudBow { 0%,100% { transform: rotate(0) scale(1); } 38% { transform: rotate(-5deg) translateY(3px) scale(.98, 1.03); } 70% { transform: rotate(2deg) translateY(-2px); } }
+@keyframes doubleBlink { 0%,100% { transform: scale(1); } 25% { transform: scale(.97, 1.03); } 48% { transform: scale(1); } 67% { transform: scale(.98, 1.02); } }
+@keyframes lookAway { 0%,100% { transform: rotate(0); } 42% { transform: rotate(4deg) translateX(3px); } 78% { transform: rotate(-1deg); } }
+@keyframes startle { 0%,100% { transform: scale(1); } 22% { transform: translateY(-7px) scale(1.04, .96); } 52% { transform: translateY(2px) scale(.98, 1.02); } }
+@keyframes jellyBounce { 0%,100% { transform: scale(1); } 30% { transform: translateY(-6px) scale(1.06, .9); } 62% { transform: translateY(2px) scale(.96, 1.06); } }
+@keyframes sideBrace { 0%,100% { transform: rotate(0) translateX(0); } 35% { transform: rotate(-4deg) translateX(-3px); } 75% { transform: rotate(1deg) translateX(2px); } }
+@keyframes capeFlick { 0%,100% { transform: rotate(0) scale(1); } 32% { transform: rotate(6deg) translateY(-2px) scale(1.02); } 65% { transform: rotate(-3deg) scale(.98, 1.02); } }
+@keyframes quickHop { 0%,100% { transform: translateY(0) scale(1); } 24% { transform: translateY(-14px) scale(.96, 1.06); } 54% { transform: translateY(2px) scale(1.05, .93); } }
+@keyframes stumble { 0%,100% { transform: rotate(0); } 28% { transform: rotate(8deg) translateY(1px); } 57% { transform: rotate(-5deg) translateY(-2px); } }
+@keyframes heelTap { 0%,100% { transform: translateY(0); } 38% { transform: translateY(-4px) rotate(-3deg); } 62% { transform: translateY(1px) rotate(3deg); } }
+@keyframes slowYawn { 0%,100% { transform: rotate(0) scale(1); } 45% { transform: rotate(-3deg) translateY(3px) scale(.98, 1.02); } 75% { transform: rotate(2deg) translateY(1px); } }
+@keyframes cheer { 0%,100% { transform: translateY(0) scale(1); } 28% { transform: translateY(-9px) rotate(-5deg) scale(1.04, .96); } 58% { transform: translateY(1px) rotate(4deg) scale(.97, 1.04); } }
+@keyframes sparkleCast { 0%,100% { transform: rotate(0) scale(1); } 35% { transform: translateY(-6px) rotate(-4deg) scale(1.03); } 70% { transform: translateY(-1px) rotate(4deg) scale(.98, 1.02); } }
 
 /* ---------- 气泡（素材 9-slice） ----------
    素材 480×160，圆角 28、描边 4，切 32。
@@ -351,6 +391,23 @@ body[data-live2d="on"] #pet.drowsy { animation: none; }
   pointer-events: none;
   -webkit-user-drag: none;
   animation: fxHeartFloat 1.5s cubic-bezier(.2, .7, .3, 1) forwards;
+}
+
+.fx-action {
+  position: absolute;
+  bottom: 65%;
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  opacity: 0;
+  pointer-events: none;
+  -webkit-user-drag: none;
+  animation: fxHeartFloat 1.35s cubic-bezier(.2, .7, .3, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #pet-gesture.gesture-active { animation-duration: .01ms; }
+  .fx-action, .fx-heart { animation-duration: .01ms; }
 }
 
 @keyframes fxHeartFloat {
