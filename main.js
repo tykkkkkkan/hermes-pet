@@ -37,6 +37,8 @@ let bridgeServer = null;
 let bridgeToken = '';
 let persona = readJson(PERSONA_FILE, {});
 const pickTouchLine = createTouchPicker(persona);
+const PANEL_MAX_PER_GROUP = 5;
+const emptyTaskPanel = () => ({ running: [], blocked: [], review: [], queued: [], total: 0 });
 let petState = {
   status: 'idle',
   statusText: '待命',
@@ -46,6 +48,7 @@ let petState = {
   queue: { todo: 0, ready: 0, scheduled: 0, running: 0, blocked: 0, review: 0, done: 0 },
   currentTask: null,
   agents: [],
+  tasks: emptyTaskPanel(),
   emotion: '平静',
   address: '好大爹',
   affection: 50,
@@ -125,6 +128,33 @@ function statusFromSnapshot(snapshot) {
 
 function taskTitle(task) {
   return String(task?.title || task?.name || `任务 #${task?.id ?? '?'}`).trim();
+}
+
+const slimTask = (task) => ({
+  id: task?.id ?? '',
+  title: taskTitle(task),
+  assignee: task?.assignee || '',
+  status: task?.status || ''
+});
+const slimGroup = (list) => (Array.isArray(list) ? list.slice(0, PANEL_MAX_PER_GROUP).map(slimTask) : []);
+function buildTaskPanel(next) {
+  const allTasks = Array.isArray(next?.tasks) ? next.tasks : [];
+  const queued = allTasks.filter((task) => ['todo', 'ready', 'scheduled'].includes(String(task?.status || '').toLowerCase()));
+  return {
+    running: slimGroup(next?.running),
+    blocked: slimGroup(next?.blocked),
+    review: slimGroup(next?.review),
+    queued: slimGroup(queued),
+    total: allTasks.length
+  };
+}
+
+function reviewTransitions(previous, next) {
+  const before = new Map((previous?.tasks || []).filter((task) => task?.id != null)
+    .map((task) => [String(task.id), task]));
+  return (next?.tasks || []).filter((task) => task?.id != null
+    && String(task.status || '').toLowerCase() === 'review'
+    && String(before.get(String(task.id))?.status || '').toLowerCase() !== 'review');
 }
 
 function announce(text, options = {}) {
@@ -310,6 +340,7 @@ function stopBridgeServer() {
 function applyHermesSnapshot(snapshot) {
   const next = petRuntime.normalizeSnapshot(snapshot);
   const transitions = petRuntime.taskTransitions(previousHermes, next);
+  const reviews = reviewTransitions(previousHermes, next);
   if (previousHermes) {
     if (transitions.some(({ task }) => task.status === 'done')) successUntil = Date.now() + 4500;
     if (transitions.some(({ task }) => petRuntime.isFailureStatus(task.status))) successUntil = 0;
@@ -330,7 +361,8 @@ function applyHermesSnapshot(snapshot) {
       title: taskTitle(next.currentTask),
       assignee: next.currentTask.assignee || ''
     } : null,
-    agents: next.agents
+    agents: next.agents,
+    tasks: buildTaskPanel(next)
   };
   if (statusChanged && (next.running || []).length) applyEmotionEvent('working');
   pushPetState();
@@ -347,6 +379,11 @@ function applyHermesSnapshot(snapshot) {
         const resultWord = task.status === 'blocked' ? '受阻' : '失败';
         announce(`{address}，${taskTitle(task)} ${resultWord}了。先别急，我把问题盯住`, { notify: true, kind: 'error', taskResult: true });
       }
+    }
+    for (const task of reviews) {
+      applyEmotionEvent('success');
+      petState.mood = Math.min(100, petState.mood + 1);
+      announce(`{address}，${taskTitle(task)} 做完了，等你验收`, { notify: true, kind: 'success', taskResult: true });
     }
     if (previousHermes.online && !next.online) {
       announce('{address}，Hermes 服务断了，我先安静等它回来', { notify: true, kind: 'error' });
@@ -586,6 +623,7 @@ function loadPetState() {
     queue: { todo: 0, ready: 0, scheduled: 0, running: 0, blocked: 0, review: 0, done: 0 },
     currentTask: null,
     agents: [],
+    tasks: emptyTaskPanel(),
     affection: Math.max(0, Math.min(100, Number(saved.affection) || 50)),
     mood: Math.max(0, Math.min(100, (Number(saved.mood) || 72) - Math.min(24, Math.floor(hoursAway * 1.5))))
   };

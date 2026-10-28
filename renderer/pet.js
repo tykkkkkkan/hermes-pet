@@ -18,6 +18,46 @@ const panelBlocked = document.getElementById('panel-blocked');
 const panelQueue = document.getElementById('panel-queue');
 const panelTask = document.getElementById('panel-task');
 const panelAgents = document.getElementById('panel-agents');
+const panelTasks = document.getElementById('panel-tasks');
+
+let lastAgentsJson = '';
+let lastTasksJson = '';
+const escapeHtml = (text) => String(text ?? '').replace(/[&<>"']/g, (character) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+}[character]));
+
+function paintAgents(agents) {
+  const json = JSON.stringify(agents || []);
+  if (json === lastAgentsJson) return;
+  lastAgentsJson = json;
+  panelAgents.innerHTML = (agents || []).map((agent) => {
+    const status = agent.status === 'working' ? 'working' : 'idle';
+    return `<span class="${status}">${escapeHtml(agent.name)}${status === 'working' ? ' · 工作中' : ' · 空闲'}</span>`;
+  }).join('');
+}
+
+function paintTaskLists(tasks) {
+  const json = JSON.stringify(tasks || {});
+  if (json === lastTasksJson) return;
+  lastTasksJson = json;
+  const groups = [
+    ['running', '执行中'],
+    ['blocked', '受阻'],
+    ['review', '待验收'],
+    ['queued', '排队']
+  ];
+  const html = groups.map(([key, label]) => {
+    const list = Array.isArray(tasks?.[key]) ? tasks[key] : [];
+    if (!list.length) return '';
+    const items = list.map((task) => {
+      const who = task.assignee ? `<span class="t-who">${escapeHtml(task.assignee)}</span>` : '';
+      return `<li><span>${escapeHtml(task.title)}</span>${who}</li>`;
+    }).join('');
+    return `<div class="t-group"><div class="t-head">${label} <b>${list.length}</b></div><ul>${items}</ul></div>`;
+  }).join('');
+  const total = Math.max(0, Number(tasks?.total) || 0);
+  panelTasks.innerHTML = `${html || '<div class="t-empty">看板是空的，暂时没活派给我</div>'}<div class="t-total">总计 ${total} 条</div>`;
+}
 
 let currentSrc = petBody.getAttribute('src');
 let currentFaceKey = 'idle';
@@ -278,7 +318,8 @@ function paintState(state) {
   panelBlocked.textContent = s.queue?.blocked || 0;
   panelQueue.textContent = (s.queue?.todo || 0) + (s.queue?.ready || 0) + (s.queue?.scheduled || 0);
   panelTask.textContent = s.currentTask ? `当前：${s.currentTask.title}${s.currentTask.assignee ? ` · ${s.currentTask.assignee}` : ''}` : '当前没有执行中的任务';
-  panelAgents.innerHTML = (s.agents || []).map((agent) => `<span class="${agent.status}">${agent.name}${agent.status === 'working' ? ' · 工作中' : ' · 空闲'}</span>`).join('');
+  paintAgents(s.agents);
+  paintTaskLists(s.tasks);
   if (s.status !== 'idle') {
     stateEl.classList.remove('drowsy');
     petEl.classList.remove('blink');
