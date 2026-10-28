@@ -1,5 +1,6 @@
 const petEl = document.getElementById('pet');
 const petBody = document.getElementById('pet-body');
+const stateEl = document.getElementById('pet-state');
 const gestureEl = document.getElementById('pet-gesture');
 const petHitArea = document.getElementById('pet-hit-area');
 const bubble = document.getElementById('bubble');
@@ -61,10 +62,10 @@ function say(text, ms = 4200, options = {}) {
   bubble.classList.remove('hidden');
   requestAnimationFrame(() => bubble.classList.add('show'));
   window.petLive2d?.speak();
-  gestureEl.classList.remove('squish');
+  stateEl.classList.remove('squish');
   void petEl.offsetWidth;
-  gestureEl.classList.add('squish');
-  setTimeout(() => gestureEl.classList.remove('squish'), 430);
+  stateEl.classList.add('squish');
+  setTimeout(() => stateEl.classList.remove('squish'), 430);
   window.pet.setIgnore(false);
   clearTimeout(bubbleTimer);
   bubbleTimer = setTimeout(() => {
@@ -165,8 +166,8 @@ function endDrag(commit) {
   window.pet.dragEnd();
   petEl.style.animationPlayState = '';
   if (commit && moved < 5) {
-    gestureEl.classList.add('hop');
-    setTimeout(() => gestureEl.classList.remove('hop'), 520);
+    stateEl.classList.add('hop');
+    setTimeout(() => stateEl.classList.remove('hop'), 520);
     const r = petHitArea.getBoundingClientRect();
     const x = (lastX - r.left) / r.width;
     const y = (lastY - r.top) / r.height;
@@ -245,11 +246,11 @@ function paintState(state) {
     currentSrc = nextSrc;
     petBody.src = nextSrc;
   }
-  gestureEl.classList.toggle('thinking', s.status === 'thinking');
-  gestureEl.classList.toggle('working', s.status === 'working');
-  gestureEl.classList.toggle('success', s.status === 'success');
-  gestureEl.classList.toggle('error', s.status === 'error');
-  gestureEl.classList.toggle('sleep', s.status === 'sleep');
+  stateEl.classList.toggle('thinking', s.status === 'thinking');
+  stateEl.classList.toggle('working', s.status === 'working');
+  stateEl.classList.toggle('success', s.status === 'success');
+  stateEl.classList.toggle('error', s.status === 'error');
+  stateEl.classList.toggle('sleep', s.status === 'sleep');
   window.petLive2d?.setState(bodyState);
   panelOnline.textContent = s.hermesOnline ? `在线 · ${s.port ? `端口 ${s.port}` : '服务正常'}` : '离线（等待 Hermes 服务）';
   panelEmotion.textContent = `${s.emotion || '平静'} · ${s.address || '好大爹'}`;
@@ -260,7 +261,7 @@ function paintState(state) {
   panelTask.textContent = s.currentTask ? `当前：${s.currentTask.title}${s.currentTask.assignee ? ` · ${s.currentTask.assignee}` : ''}` : '当前没有执行中的任务';
   panelAgents.innerHTML = (s.agents || []).map((agent) => `<span class="${agent.status}">${agent.name}${agent.status === 'working' ? ' · 工作中' : ' · 空闲'}</span>`).join('');
   if (s.status !== 'idle') {
-    gestureEl.classList.remove('drowsy');
+    stateEl.classList.remove('drowsy');
     petEl.classList.remove('blink');
   }
 }
@@ -385,8 +386,7 @@ function idleLoop() {
   const wait = 6000 + Math.random() * 7000;
   setTimeout(() => {
     if (!dragging && !bubbleVisible() && (petEl.dataset.state || 'idle') === 'idle') {
-      const group = ['idle', 'idle', 'playful', 'magic'][Math.floor(Math.random() * 4)];
-      playAction(group);
+      playAction('all');
     }
     idleLoop();
   }, wait);
@@ -396,11 +396,11 @@ scheduleBlink();
 setInterval(() => {
   const idleFor = Date.now() - lastActivityAt;
   const isCalm = petEl.dataset.state === 'idle' && !dragging && !bubbleVisible();
-  gestureEl.classList.toggle('drowsy', isCalm && idleFor >= 20 * 60000);
+  stateEl.classList.toggle('drowsy', isCalm && idleFor >= 20 * 60000);
 }, 30000);
 petHitArea.addEventListener('mouseenter', () => {
   lastActivityAt = Date.now();
-  gestureEl.classList.remove('drowsy');
+  stateEl.classList.remove('drowsy');
 });
 
 /* ---------------- 托盘消息 ---------------- */

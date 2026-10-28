@@ -114,6 +114,7 @@ html, body {
   will-change: transform;
 }
 
+#pet-state,
 #pet-gesture {
   position: absolute;
   inset: 0;
@@ -140,13 +141,14 @@ html, body {
 }
 #pet-live2d-host canvas { display: block; }
 body[data-live2d="on"] #pet-inner { display: none; }
-body[data-live2d="on"] #pet-gesture,
-body[data-live2d="on"] #pet-gesture.thinking,
-body[data-live2d="on"] #pet-gesture.working,
-body[data-live2d="on"] #pet-gesture.success,
-body[data-live2d="on"] #pet-gesture.error,
-body[data-live2d="on"] #pet-gesture.sleep,
-body[data-live2d="on"] #pet-gesture.drowsy { animation: none; }
+body[data-live2d="on"] #pet-state,
+body[data-live2d="on"] #pet-state.thinking,
+body[data-live2d="on"] #pet-state.working,
+body[data-live2d="on"] #pet-state.success,
+body[data-live2d="on"] #pet-state.error,
+body[data-live2d="on"] #pet-state.sleep,
+body[data-live2d="on"] #pet-state.drowsy,
+body[data-live2d="on"] #pet-gesture { animation: none; }
 
 .pet-halo {
   mix-blend-mode: screen;
@@ -205,16 +207,16 @@ body[data-live2d="on"] #pet-gesture.drowsy { animation: none; }
   100% { transform: translateX(-50%) rotate(0deg); }
 }
 
-#pet-gesture.hop {
+#pet-state.hop {
   animation: hop 0.5s ease-out;
 }
-#pet-gesture.thinking {
+#pet-state.thinking {
   animation: thinking 1.1s ease-in-out infinite;
 }
-#pet-gesture.working { animation: work 1.5s ease-in-out infinite; filter: drop-shadow(0 8px 12px rgba(72, 57, 138, 0.34)) saturate(1.08); }
-#pet-gesture.success { animation: success 0.8s ease-out; filter: drop-shadow(0 8px 12px rgba(47, 151, 176, 0.32)); }
-#pet-gesture.error { animation: error 0.9s ease-in-out infinite; filter: drop-shadow(0 8px 12px rgba(180, 64, 78, 0.34)) saturate(0.8); }
-#pet-gesture.sleep { animation: sleep 4.5s ease-in-out infinite; filter: grayscale(0.25) brightness(0.88) drop-shadow(0 8px 12px rgba(0, 0, 0, 0.2)); }
+#pet-state.working { animation: work 1.5s ease-in-out infinite; filter: drop-shadow(0 8px 12px rgba(72, 57, 138, 0.34)) saturate(1.08); }
+#pet-state.success { animation: success 0.8s ease-out; filter: drop-shadow(0 8px 12px rgba(47, 151, 176, 0.32)); }
+#pet-state.error { animation: error 0.9s ease-in-out infinite; filter: drop-shadow(0 8px 12px rgba(180, 64, 78, 0.34)) saturate(0.8); }
+#pet-state.sleep { animation: sleep 4.5s ease-in-out infinite; filter: grayscale(0.25) brightness(0.88) drop-shadow(0 8px 12px rgba(0, 0, 0, 0.2)); }
 #pet[data-emotion="开心"] .pet-body,
 #pet[data-emotion="得意"] .pet-body { filter: drop-shadow(0 4px 9px rgba(255, 178, 89, .34)) saturate(1.12); }
 #pet[data-emotion="犯困"] .pet-body,
@@ -222,7 +224,7 @@ body[data-live2d="on"] #pet-gesture.drowsy { animation: none; }
 #pet[data-emotion="有点烦"] .pet-body,
 #pet[data-emotion="闹别扭"] .pet-body { filter: saturate(.84) contrast(1.04) drop-shadow(0 4px 8px rgba(10, 16, 32, .22)); }
 #pet[data-emotion="兴奋"] .pet-body { filter: saturate(1.2) brightness(1.04) drop-shadow(0 4px 10px rgba(121, 104, 222, .36)); }
-#pet-gesture.drowsy { animation: sleep 4.5s ease-in-out infinite; }
+#pet-state.drowsy { animation: sleep 4.5s ease-in-out infinite; }
 @keyframes work {
   0%, 100% { transform: translateY(0) scale(1); }
   50% { transform: translateY(-3px) scale(1.012); }
@@ -260,17 +262,21 @@ body[data-live2d="on"] #pet-gesture.drowsy { animation: none; }
   70%  { transform: scale(0.97, 1.04); }
   100% { transform: scale(1, 1); }
 }
-#pet-gesture.squish { animation: squish .42s cubic-bezier(.36, .07, .19, .97); }
+#pet-state.squish { animation: squish .42s cubic-bezier(.36, .07, .19, .97); }
 /* 伸懒腰：待机时偶尔微微侧身拉伸一下 */
 @keyframes stretch {
   0%   { transform: rotate(0) scaleY(1); }
   40%  { transform: rotate(calc(-2deg * var(--sway-dir, 1))) translateY(-2px) scaleY(1.015); }
   100% { transform: rotate(0) scaleY(1); }
 }
-#pet-gesture.stretch { animation: stretch 1.6s cubic-bezier(.36, .07, .19, .97); }
+#pet-state.stretch { animation: stretch 1.6s cubic-bezier(.36, .07, .19, .97); }
 
 /* 15 个真动作：12 个热区动作 + 3 个陪伴动作。动作表提供动画名和时长。 */
-#pet-gesture.gesture-active { animation-duration: calc(var(--gesture-ms, 900) * 1ms); animation-fill-mode: both; }
+#pet-gesture.gesture-active {
+  animation-duration: calc(var(--gesture-ms, 900) * 1ms);
+  animation-iteration-count: 1;
+  animation-fill-mode: both;
+}
 #pet-gesture.gesture-active[data-action="hat-check"] { animation-name: hatCheck; animation-timing-function: ease-out; }
 #pet-gesture.gesture-active[data-action="soft-lean"] { animation-name: softLean; animation-timing-function: cubic-bezier(.22, .61, .36, 1); }
 #pet-gesture.gesture-active[data-action="proud-bow"] { animation-name: proudBow; animation-timing-function: ease-in-out; }

@@ -24,3 +24,11 @@ test('点击分区映射到对应动作组，重复抽取会避开上一个动�
   assert.notEqual(first.id, next.id);
   assert.equal(chooseAction('missing'), null);
 });
+
+test('待机全动作池可以抽到非陪伴动作且仍避开上一次', () => {
+  const first = chooseAction('all', '', () => 0);
+  const next = chooseAction('all', first.id, () => 0);
+  assert.equal(first.id, 'hat-check');
+  assert.notEqual(next.id, first.id);
+  assert.equal(ACTIONS.some((action) => action.group === 'feet'), true);
+});

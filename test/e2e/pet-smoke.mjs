@@ -13,6 +13,7 @@ const KEEP = process.argv.includes('--keep');
 const ISOLATED = process.argv.includes('--isolated');
 const TMP_PROFILE = path.join(ROOT, '.tmp', 'smoke-profile');
 const ART = path.join(ROOT, 'test/e2e/artifacts');
+const DOC_ART = path.join(ROOT, 'docs');
 
 const results = [];
 function check(name, ok, detail = '') {
@@ -70,6 +71,12 @@ async function evaluate(cdp, expression) {
   return r.result?.value;
 }
 
+async function capture(cdp, file) {
+  const shot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+  fs.writeFileSync(file, Buffer.from(shot.data, 'base64'));
+  return fs.statSync(file).size > 5000;
+}
+
 async function main() {
   fs.mkdirSync(ART, { recursive: true });
   console.log(`启动 Electron（调试端口 ${PORT}）…`);
@@ -104,11 +111,20 @@ async function main() {
       ready: document.readyState,
       hasStage: !!document.getElementById('stage'),
       hasPet: !!document.getElementById('pet'),
+      hasState: !!document.getElementById('pet-state'),
+      hasGesture: !!document.getElementById('pet-gesture'),
       hasInner: !!document.getElementById('pet-inner'),
       size: [innerWidth, innerHeight]
     })`);
-    check('窗口渲染出桌宠页面', meta?.ready === 'complete' && meta?.hasPet && meta?.hasInner,
+    check('窗口渲染出桌宠页面', meta?.ready === 'complete' && meta?.hasPet && meta?.hasState && meta?.hasGesture && meta?.hasInner,
       `${meta?.title} ${meta?.size?.join('x')}`);
+
+    const split = await evaluate(cdp, `(() => {
+      const state = document.getElementById('pet-state');
+      const gesture = document.getElementById('pet-gesture');
+      return { state: !!state, gesture: !!gesture, nested: !!state?.contains(gesture), stateAnimation: getComputedStyle(state).animationName, gestureAnimation: getComputedStyle(gesture).animationName };
+    })()`);
+    check('状态层与动作层独立嵌套', split?.nested && split?.stateAnimation === 'none' && split?.gestureAnimation === 'none', JSON.stringify(split));
 
     // ---- 2. preload 暴露的 API 齐全 ----
     const api = await evaluate(cdp, `(() => {
@@ -180,11 +196,50 @@ async function main() {
     })()`);
     check('点头能触发互动回应', switched?.changed, `回应气泡已显示：${switched?.changed}`);
 
+    const triggerZone = async (zone) => evaluate(cdp, `(async () => {
+      const area = document.getElementById('pet-hit-area');
+      const regions = window.pet.regions;
+      const region = regions.${zone};
+      const bounds = area.getBoundingClientRect();
+      const x = bounds.left + bounds.width * ((region.left + region.right) / 2);
+      const y = bounds.top + bounds.height * ((region.top + region.bottom) / 2);
+      const event = { bubbles: true, button: 0, clientX: x, clientY: y, screenX: x, screenY: y };
+      window.dispatchEvent(new MouseEvent('mousemove', event));
+      area.dispatchEvent(new MouseEvent('mousedown', event));
+      window.dispatchEvent(new MouseEvent('mouseup', event));
+      const immediate = { action: document.getElementById('pet-gesture').dataset.action || '', active: document.getElementById('pet-gesture').classList.contains('gesture-active') };
+      await new Promise(r => setTimeout(r, 70));
+      const gesture = document.getElementById('pet-gesture');
+      return { immediate, stateActive: document.getElementById('pet-state').className, action: gesture.dataset.action || '', active: gesture.classList.contains('gesture-active'), iteration: getComputedStyle(gesture).animationIterationCount, animation: getComputedStyle(gesture).animationName };
+    })()`);
+
+    const headAction = await triggerZone('head');
+    check('点头动作单次播放且不抢呼吸', headAction?.immediate?.active && headAction.immediate?.action && headAction.iteration === '1', JSON.stringify(headAction));
+    check('点头截图', await capture(cdp, path.join(DOC_ART, 'pet-action-head.png')), 'docs/pet-action-head.png');
+
+    const feetAction = await triggerZone('feet');
+    check('点脚动作单次播放', feetAction?.immediate?.active && feetAction?.immediate?.action && feetAction.iteration === '1', JSON.stringify(feetAction));
+    check('点脚截图', await capture(cdp, path.join(DOC_ART, 'pet-action-feet.png')), 'docs/pet-action-feet.png');
+
+    await evaluate(cdp, `window.pet.setStatus('working'); true`);
+    await sleep(60);
+    const workingAction = await triggerZone('body');
+    const stateDuringAction = await evaluate(cdp, `(() => { const state = document.getElementById('pet-state'); const gesture = document.getElementById('pet-gesture'); return { working: state.classList.contains('working'), active: gesture.classList.contains('gesture-active'), iteration: getComputedStyle(gesture).animationIterationCount }; })()`);
+    check('工作状态下动作不变成无限循环', workingAction?.immediate?.active && stateDuringAction?.iteration === '1', JSON.stringify({ workingAction, stateDuringAction }));
+
+    await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    const reduced = await triggerZone('face');
+    await sleep(120);
+    const reducedAfter = await evaluate(cdp, `document.getElementById('pet-gesture').classList.contains('gesture-active')`);
+    check('减少动态下动作能降级并清理', reduced?.immediate?.active && reduced?.iteration === '1' && reducedAfter === false, JSON.stringify({ reduced, reducedAfter }));
+    await cdp.send('Emulation.setEmulatedMedia', { features: [] });
+    await evaluate(cdp, `window.pet.setStatus('idle'); true`);
+
+    check('待机截图', await capture(cdp, path.join(DOC_ART, 'pet-action-idle.png')), 'docs/pet-action-idle.png');
+
     // ---- 8. 截图留证 ----
-    const shot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
     const file = path.join(ART, `pet-${new Date().toISOString().replace(/[:.]/g, '-')}.png`);
-    fs.writeFileSync(file, Buffer.from(shot.data, 'base64'));
-    check('截图留证', fs.statSync(file).size > 5000, file);
+    check('截图留证', await capture(cdp, file), file);
   } catch (e) {
     check('实机验收执行', false, e.message);
   } finally {

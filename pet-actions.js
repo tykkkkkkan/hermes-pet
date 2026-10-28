@@ -22,7 +22,7 @@ const ACTIONS = [
 const TOUCH_GROUP = { head: 'head', face: 'face', body: 'body', feet: 'feet' };
 
 function chooseAction(group, previousId = '', random = Math.random) {
-  const pool = ACTIONS.filter((action) => action.group === group);
+  const pool = group === 'all' ? ACTIONS : ACTIONS.filter((action) => action.group === group);
   if (!pool.length) return null;
   const candidates = pool.length > 1 ? pool.filter((action) => action.id !== previousId) : pool;
   return candidates[Math.floor(random() * candidates.length)] || pool[0];
