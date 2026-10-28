@@ -26,6 +26,8 @@
   let app = null;
   let root = null, jumpC = null, breathe = null, headC = null;
   let bodySprite = null, headSprite = null, eyesSprite = null, mouthSprite = null;
+  let shadowSprite = null;
+  const shadowScale = { x: 1, y: 1 };
   let meta = null;
   let ready = false;
   let state = 'idle';
@@ -91,7 +93,9 @@
     const cw = meta.canvas.width, ch = meta.canvas.height;
     const s = Math.min((w * 0.99) / cw, (h * 0.98) / ch);
     root.scale.set(s);
-    root.position.set(w / 2 - (cw * s) / 2, h - ch * s);
+    // 脚底留一条屏幕空间给投影，否则影子会被窗口裁掉，角色又回到"浮着"的状态
+    const shadowPad = Math.max(9, ch * s * 0.026);
+    root.position.set(w / 2 - (cw * s) / 2, h - ch * s - shadowPad);
   }
 
   async function init() {
@@ -110,11 +114,13 @@
       if (!metaRes.ok) throw new Error('meta.json 读取失败 ' + metaRes.status);
       meta = await metaRes.json();
 
-      const [bodyTex, headTex, eyesTex, mouthTex] = await Promise.all([
+      const [bodyTex, headTex, eyesTex, mouthTex, shadowTex] = await Promise.all([
         loadTexture(BASE + 'body.png'),
         loadTexture(BASE + 'head.png'),
         loadTexture(BASE + 'eyes.png'),
-        loadTexture(BASE + 'mouth.png')
+        loadTexture(BASE + 'mouth.png'),
+        // 投影是加分项，缺了也要照常渲染，所以单独兜住失败
+        loadTexture(BASE + 'shadow.png').catch(() => null)
       ]);
 
       app = new PIXI.Application({
@@ -144,6 +150,18 @@
       bodySprite = new PIXI.Sprite(bodyTex);
       bodySprite.anchor.set(0, 0);
 
+      /* 脚底投影：贴在画布底部，不跟随 jumpC 上浮，
+       * 这样跳起来时影子留在原位缩小变淡，人才真的"离开地面"。 */
+      if (shadowTex) {
+        shadowSprite = new PIXI.Sprite(shadowTex);
+        shadowSprite.anchor.set(0.5, 0.5);
+        shadowSprite.position.set(cw / 2, ch - 6);
+        shadowScale.x = (cw * 0.8) / shadowTex.width;
+        shadowScale.y = (ch * 0.055) / shadowTex.height;
+        shadowSprite.scale.set(shadowScale.x, shadowScale.y);
+        shadowSprite.alpha = 0.92;
+      }
+
       // 头部容器绕脖子根部旋转
       headC.pivot.set(pivX, pivY);
       headC.position.set(pivX, pivY);
@@ -163,6 +181,7 @@
       headC.addChild(headSprite, eyesSprite, mouthSprite);
       breathe.addChild(bodySprite, headC);
       jumpC.addChild(breathe);
+      if (shadowSprite) root.addChild(shadowSprite);
       root.addChild(jumpC);
       app.stage.addChild(root);
       fit();
@@ -202,14 +221,18 @@
     eyesSprite.scale.y = 0.12 + 0.88 * openness;
     eyesSprite.alpha = openness < 0.18 ? openness / 0.18 : 1;
     eyesSprite.position.set(
-      meta.eyes.x + meta.eyes.w / 2 + lookCX * 2.6,
+      meta.eyes.x + meta.eyes.w / 2 + lookCX * 3.2,
       meta.eyes.y + meta.eyes.h + lookCY * 2.1
     );
 
-    /* 头部：状态倾角 + 视线跟随 + 互动冲量 */
-    const rotDeg = cur.rot + lookCX * 5.5 + imp.rot;
+    /* 头部：状态倾角 + 视线跟随 + 互动冲量。
+       再加两笔透视：转头时沿 X 轴压扁（cos 效应）+ 轻微斜切，
+       这是"一张平面的脸"变成"有体积的头"最关键的一步。 */
+    const rotDeg = cur.rot + lookCX * 7.2 + imp.rot;
     headC.rotation = (rotDeg * Math.PI) / 180;
-    headC.position.set(meta.head.pivotX + lookCX * 3, meta.head.pivotY + cur.dy + lookCY * 2 + imp.dy);
+    headC.position.set(meta.head.pivotX + lookCX * 3.4, meta.head.pivotY + cur.dy + lookCY * 2 + imp.dy);
+    headC.scale.x = 1 - Math.abs(lookCX) * 0.085;
+    headC.skew.x = -lookCX * 0.072;
 
     /* 嘴部：说话时按语音节奏开合，节拍不依赖 TTS */
     const speaking = now < speakUntil;
@@ -223,10 +246,25 @@
     mouthSprite.alpha = Math.min(1, mouthOpen * 1.7);
     mouthSprite.scale.y = 0.84 + 0.16 * clamp(mouthOpen, 0, 1);
 
-    /* 呼吸与轻微重心摆动 */
-    const breath = Math.sin(now / 1080 * cur.breath) * 0.0085;
+    /* 呼吸与重心摆动。
+       身体横向位移与视线相反（对立式）：头往左看、身子微往右，
+       才有"转身"的体积感，而不是整只角色一起平移。 */
+    const breath = Math.sin((now / 1080) * cur.breath) * 0.0085;
     breathe.scale.y = 1 + breath;
-    breathe.x = Math.sin(now / 2700) * 1.1 + cur.lean * 0.35;
+    breathe.scale.x = 1 - breath * 0.45;
+    breathe.x = Math.sin(now / 2700) * 1.1 + cur.lean * 0.35 - lookCX * 1.5;
+    breathe.rotation = -lookCX * 0.012;
+
+    /* 投影：起跳时缩小变淡、呼吸时跟着起伏，影子是"离地"的唯一线索 */
+    if (shadowSprite) {
+      const lift = Math.max(0, -imp.jump) / 16;
+      shadowSprite.scale.set(
+        shadowScale.x * (1 - lift * 0.24) * (1 + breath * 0.6),
+        shadowScale.y * (1 - lift * 0.3)
+      );
+      shadowSprite.alpha = 0.92 - lift * 0.5;
+      shadowSprite.x = meta.canvas.width / 2 - lookCX * 6;
+    }
 
     /* 跳跃冲量 */
     jumpC.y = imp.jump;
@@ -272,5 +310,19 @@
   };
 
   window.petLive2d = api;
+  window.__petPuppetDebug = () => (shadowSprite ? {
+    shadow: {
+      w: shadowSprite.width,
+      h: shadowSprite.height,
+      alpha: shadowSprite.alpha,
+      x: shadowSprite.x,
+      y: shadowSprite.y,
+      visible: shadowSprite.visible,
+      inRoot: !!(root && root.children.indexOf(shadowSprite) >= 0)
+    },
+    rootChildren: root ? root.children.length : -1,
+    stageScale: root ? root.scale.x : -1,
+    rootY: root ? root.position.y : -1
+  } : { shadow: null, rootChildren: root ? root.children.length : -1 });
   api.init();
 })();
