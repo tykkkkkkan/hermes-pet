@@ -1,0 +1,258 @@
+/* 自研 2.5D 分层渲染器（Puppet）。
+ *
+ * 不依赖 Live2D 运行时，用 PixiJS 对「头部 / 眼睛 / 嘴巴 / 身体」四层做变换，
+ * 实现扭头、眨眼、视线跟随、说话口型、呼吸与互动反馈。
+ *
+ * 素材来自 tools/build-pet-layers.js 拆出的图层，与角色原立绘逐像素对齐。
+ * 对外接口与 pet-live2d.js 完全一致，pet.js 无需改动。
+ * 任何一步失败都静默回退静态立绘。
+ */
+(function () {
+  const BASE = 'petasset://app/assets/pet-layers/';
+
+  /* 六态参数：头部倾角 / 头部纵向偏移 / 眼睛开合 / 嘴部开合 / 呼吸强度 / 身体侧倾 */
+  const STATES = {
+    idle: { rot: 0, dy: 0, eye: 1, mouth: 0, breath: 1, lean: 0 },
+    thinking: { rot: -6.5, dy: -8, eye: 0.94, mouth: 0, breath: 1, lean: -1 },
+    working: { rot: 3.5, dy: 2, eye: 0.97, mouth: 0, breath: 1.35, lean: 1.2 },
+    success: { rot: 0, dy: -10, eye: 0.3, mouth: 0.55, breath: 1.1, lean: 0 },
+    error: { rot: -1, dy: 9, eye: 0.52, mouth: 0.15, breath: 0.8, lean: -1.5 },
+    sleep: { rot: -4, dy: 10, eye: 0, mouth: 0, breath: 0.65, lean: -2 }
+  };
+
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+  let app = null;
+  let root = null, jumpC = null, breathe = null, headC = null;
+  let bodySprite = null, headSprite = null, eyesSprite = null, mouthSprite = null;
+  let meta = null;
+  let ready = false;
+  let state = 'idle';
+  let target = { ...STATES.idle };
+  let cur = { ...STATES.idle };
+
+  let lookX = 0, lookY = 0, lookCX = 0, lookCY = 0;
+  let speakUntil = 0;
+  const imp = { rot: 0, dy: 0, lean: 0, jump: 0 };
+  let blinkAt = -1, blinkQueue = 0;
+
+  function scheduleBlink(now) {
+    blinkAt = now + 2800 + Math.random() * 3600;
+    blinkQueue = Math.random() < 0.18 ? 1 : 0;
+  }
+
+  /* 返回 0..1 的眼睛开合系数：闭得快、睁得慢，偶发双连眨 */
+  function blinkFactor(now) {
+    if (blinkAt < 0) { scheduleBlink(now); return 1; }
+    if (now < blinkAt) return 1;
+    const t = now - blinkAt;
+    const CLOSE = 58, TOTAL = 190;
+    if (t <= TOTAL) return t < CLOSE ? 1 - t / CLOSE : (t - CLOSE) / (TOTAL - CLOSE);
+    if (blinkQueue > 0) { blinkQueue--; blinkAt = now + 105; return 1; }
+    scheduleBlink(now);
+    return 1;
+  }
+
+  function loadTexture(url) {
+    return new Promise((resolve, reject) => {
+      const tex = PIXI.Texture.from(url);
+      if (tex.baseTexture.valid) return resolve(tex);
+      tex.baseTexture.once('loaded', () => resolve(tex));
+      tex.baseTexture.once('error', () => reject(new Error('纹理加载失败: ' + url)));
+    });
+  }
+
+  function makeSprite(tex, x, y, anchorX, anchorY) {
+    const sp = new PIXI.Sprite(tex);
+    sp.anchor.set(anchorX, anchorY);
+    sp.position.set(x, y);
+    return sp;
+  }
+
+  function fit() {
+    if (!root || !meta) return;
+    const w = window.innerWidth, h = window.innerHeight;
+    const cw = meta.canvas.width, ch = meta.canvas.height;
+    const s = Math.min((w * 0.99) / cw, (h * 0.98) / ch);
+    root.scale.set(s);
+    root.position.set(w / 2 - (cw * s) / 2, h - ch * s);
+  }
+
+  async function init() {
+    if (ready || app) return ready;
+    if (new URLSearchParams(location.search).get('live2d') === '0') {
+      document.body.dataset.live2d = 'off';
+      console.log('[pet-puppet] 已按配置停用，使用静态立绘');
+      return false;
+    }
+    try {
+      if (!window.PIXI) throw new Error('PIXI 未加载');
+      const host = document.getElementById('pet-live2d-host');
+      if (!host) throw new Error('缺少渲染容器');
+
+      const metaRes = await fetch(BASE + 'meta.json', { cache: 'no-store' });
+      if (!metaRes.ok) throw new Error('meta.json 读取失败 ' + metaRes.status);
+      meta = await metaRes.json();
+
+      const [bodyTex, headTex, eyesTex, mouthTex] = await Promise.all([
+        loadTexture(BASE + 'body.png'),
+        loadTexture(BASE + 'head.png'),
+        loadTexture(BASE + 'eyes.png'),
+        loadTexture(BASE + 'mouth.png')
+      ]);
+
+      app = new PIXI.Application({
+        backgroundAlpha: 0,
+        antialias: true,
+        resolution: window.devicePixelRatio || 1,
+        autoDensity: true,
+        width: window.innerWidth,
+        height: window.innerHeight
+      });
+      host.appendChild(app.view);
+
+      const cw = meta.canvas.width;
+      const ch = meta.canvas.height;
+      const pivX = meta.head.pivotX;
+      const pivY = meta.head.pivotY;
+
+      root = new PIXI.Container();
+      jumpC = new PIXI.Container();
+      breathe = new PIXI.Container();
+      headC = new PIXI.Container();
+
+      // 呼吸以脚底为基准缩放，看起来像重心起伏而不是整体膨胀
+      breathe.pivot.set(0, ch);
+      breathe.position.set(0, ch);
+
+      bodySprite = new PIXI.Sprite(bodyTex);
+      bodySprite.anchor.set(0, 0);
+
+      // 头部容器绕脖子根部旋转
+      headC.pivot.set(pivX, pivY);
+      headC.position.set(pivX, pivY);
+
+      headSprite = new PIXI.Sprite(headTex);
+      headSprite.anchor.set(0, 0);
+
+      const e = meta.eyes;
+      // 锚点放在眼睛下沿：眯眼时上眼睑向下压、下沿不动，才像真实的半闭眼
+      eyesSprite = makeSprite(eyesTex, e.x + e.w / 2, e.y + e.h, 0.5, 1);
+
+      const m = meta.mouth;
+      // 嘴部锚点靠上：张口时从上唇向下展开，符合说话的动作方向
+      mouthSprite = makeSprite(mouthTex, m.x + m.w / 2, m.y + m.h * 0.18, 0.5, 0.18);
+      mouthSprite.alpha = 0;
+
+      headC.addChild(headSprite, eyesSprite, mouthSprite);
+      breathe.addChild(bodySprite, headC);
+      jumpC.addChild(breathe);
+      root.addChild(jumpC);
+      app.stage.addChild(root);
+      fit();
+      window.addEventListener('resize', fit);
+
+      app.ticker.add(tick);
+
+      ready = true;
+      document.body.dataset.live2d = 'on';
+      console.log('[pet-puppet] 图层就绪', cw + 'x' + ch, '切缝 y=' + pivY);
+      return true;
+    } catch (err) {
+      console.warn('[pet-puppet] 回退静态立绘：', err && err.message);
+      document.body.dataset.live2d = 'off';
+      if (app) {
+        try { app.destroy(true, { children: true }); } catch { /* ignore */ }
+        app = null;
+      }
+      return false;
+    }
+  }
+
+  function tick() {
+    if (!ready) return;
+    const now = performance.now();
+
+    for (const k of Object.keys(STATES.idle)) cur[k] = lerp(cur[k], target[k], 0.075);
+    lookCX = lerp(lookCX, lookX, 0.11);
+    lookCY = lerp(lookCY, lookY, 0.11);
+
+    /* 眼睛：以纵向压缩表现眯眼（上下自然露出眼皮），只在接近闭合时才收 alpha。
+       直接用 alpha 淡出会让半睁状态的眼睛发灰透明，观感很差。 */
+    const openness = clamp(cur.eye * blinkFactor(now), 0, 1);
+    eyesSprite.scale.y = 0.12 + 0.88 * openness;
+    eyesSprite.alpha = openness < 0.18 ? openness / 0.18 : 1;
+    eyesSprite.position.set(
+      meta.eyes.x + meta.eyes.w / 2 + lookCX * 2.6,
+      meta.eyes.y + meta.eyes.h + lookCY * 2.1
+    );
+
+    /* 头部：状态倾角 + 视线跟随 + 互动冲量 */
+    const rotDeg = cur.rot + lookCX * 5.5 + imp.rot;
+    headC.rotation = (rotDeg * Math.PI) / 180;
+    headC.position.set(meta.head.pivotX + lookCX * 3, meta.head.pivotY + cur.dy + lookCY * 2 + imp.dy);
+
+    /* 嘴部：说话时按语音节奏开合，节拍不依赖 TTS */
+    const speaking = now < speakUntil;
+    let mouthOpen = cur.mouth;
+    if (speaking) {
+      const beat = Math.sin(now / 88) * 0.5 + 0.5;
+      mouthOpen = Math.max(mouthOpen, 0.35 + beat * 0.55);
+      headC.rotation += Math.sin(now / 210) * 0.012;
+    }
+    // 张开幅度决定不透明度：一旦开口就基本实心，避免半透明嘴
+    mouthSprite.alpha = Math.min(1, mouthOpen * 1.7);
+    mouthSprite.scale.y = 0.84 + 0.16 * clamp(mouthOpen, 0, 1);
+
+    /* 呼吸与轻微重心摆动 */
+    const breath = Math.sin(now / 1080 * cur.breath) * 0.0085;
+    breathe.scale.y = 1 + breath;
+    breathe.x = Math.sin(now / 2700) * 1.1 + cur.lean * 0.35;
+
+    /* 跳跃冲量 */
+    jumpC.y = imp.jump;
+
+    imp.rot *= 0.9;
+    imp.dy *= 0.9;
+    imp.lean *= 0.92;
+    imp.jump *= 0.85;
+  }
+
+  const api = {
+    isReady: () => ready,
+    init,
+    setState(next) {
+      if (!STATES[next]) return;
+      state = next;
+      target = { ...STATES[next] };
+    },
+    getState: () => state,
+    setLook(x, y) {
+      lookX = clamp(x, -1, 1);
+      lookY = clamp(y, -1, 1);
+    },
+    speak() {
+      speakUntil = performance.now() + 1400;
+    },
+    onInteract(zone) {
+      if (!ready) return;
+      if (zone === 'head') {
+        imp.rot = -10;
+        imp.dy = -4;
+      } else if (zone === 'face') {
+        blinkAt = performance.now();
+        blinkQueue = 1;
+      } else if (zone === 'body') {
+        imp.lean = 5;
+        imp.rot = 3;
+      } else if (zone === 'feet') {
+        imp.jump = -14;
+      }
+      setTimeout(() => { imp.rot = 0; imp.dy = 0; imp.lean = 0; }, 700);
+    }
+  };
+
+  window.petLive2d = api;
+  api.init();
+})();

@@ -583,7 +583,7 @@ function createWindow() {
   win.webContents.on('console-message', (...args) => {
     const first = args[0];
     const message = first && typeof first === 'object' && 'message' in first ? first.message : args[2];
-    if (typeof message === 'string' && message.startsWith('[pet-live2d]')) console.log(message);
+    if (typeof message === 'string' && (message.startsWith('[pet-live2d]') || message.startsWith('[pet-puppet]'))) console.log(message);
   });
   win.on('move', () => {
     if (!win.isDestroyed()) {

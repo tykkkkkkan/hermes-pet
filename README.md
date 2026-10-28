@@ -146,6 +146,8 @@ hermes plugins install "file:///D:/01-项目/hermes-pet" --force --enable
 main.js                 主进程：窗口、托盘、穿透、桥接、状态机
 preload.js              contextBridge 暴露给渲染层的受限 API
 renderer/               pet.html/pet.js 桌宠窗，chat.html/chat.js 聊天窗
+                        pet-puppet.js 2.5D 分层渲染（当前使用）
+                        pet-live2d.js Live2D 渲染层（备用，未启用）
 hermes-bridge.js        读取 Hermes gateway 状态、任务、会话、技能
 pet-emotion.js          心情与好感衰减
 pet-regions.js          四区热区命中（头/脸/身/脚）
@@ -156,42 +158,72 @@ hermes_pet_plugin.py    Hermes 插件：6 个工具的桥接客户端
 plugin.yaml             插件清单（standalone）
 skills/hermes-pet/      插件自带的 SKILL.md
 assets/states/v2/       状态立绘、表情、特效（aligned 为对齐后的正式版）
+assets/pet-layers/      2.5D 分层素材：body/head/eyes/mouth + meta.json
+tools/                  拆层工具：imgutil / analyze-layers / build-pet-layers
 test/                   unit + e2e 冒烟
 docs/                   规格书、对标差距、素材规格、实施指令
 ```
 
-## Live2D 2.5D 改造（进行中）
+## 2.5D 分层渲染（已落地）
 
-目标是把静态立绘换成 Live2D 骨骼模型，做出「会扭头、会呼吸、能被戳」的 2.5D 效果。
+目标是让桌宠「会扭头、会呼吸、能被戳」。最终**没有走 Live2D 骨骼路线**，而是自研了一套分层 puppet。
 
-| 阶段 | 状态 | 说明 |
+### 为什么不是 Live2D
+
+Live2D 要求素材是**分层 PSD**（头发/脸/眼/身各自独立、边缘过画），再用 Cubism Editor 绑骨骼导出 `.moc3`。而项目现有素材是 AI 生成的**单层整图**，喂进去只会被当成一整块皮拉扯。出分层 PSD 是美术工程，AI 无法一次性产出严格对齐的多图层。
+
+于是换了个思路：**AI 只负责生成同姿势的表情差分，图层由程序差分算出。**
+
+### 拆层原理
+
+| 图层 | 来源 | 作用 |
 |---|---|---|
-| 0. 技术验证 | ✅ 已跑通 | PixiJS + pixi-live2d-display + Cubism Core 4.2 渲染官方示例模型 |
-| 1. 素材分层 | ⬜ 待做 | 需要把单层立绘拆成部件图层（美术产出），规范见 `docs/Live2D-分层素材规范.md` |
-| 2. 绑骨骼 | ⬜ 待做 | Cubism Editor 绑网格/参数/表情/物理，导出 moc3 |
-| 3. 接入六态 | ✅ 已跑通（示例模型） | 六态参数映射、四区互动、说话口型已接进主窗；换角色只需替换模型文件 |
+| `body.png` | 原立绘完整图 | 底层。头部转开时露出的是原图真实像素，天然填缝，不会出现补绘条纹 |
+| `head.png` | 原立绘头部，眼窝替换成闭眼版的眼皮 | 绕脖子轴心独立旋转；眨眼时眼睛层收拢即露出眼皮 |
+| `eyes.png` | 睁眼与闭眼的差异像素 | 眯眼压缩、视线偏移、眨眼 |
+| `mouth.png` | 睁眼与张嘴的差异像素 | 说话开合 |
 
-> ⚠️ 当前主窗显示的是官方示例模型 Hiyori，**不是**本项目的执事角色。要换回自己的角色，需要先完成 Phase 1（分层素材）和 Phase 2（绑骨骼），然后把 `renderer/pet-live2d.js` 里的 `MODEL_URL` 指向新模型即可，接入层代码不用改。
+三个关键点：
 
-接入层设计要点：
+- **眼睛层与头部层逐像素对齐**——它是从同一张图差分出来的，不存在「AI 分别画几张对不上」的问题
+- **闭眼不靠贴图切换**——`head` 的眼窝本来就是闭眼眼皮，眼睛层一收就自然闭合
+- **扭头不留缝**——`body` 保留完整原图，头部转开后露出的是原画内容
 
-- **自动回退**：Live2D 任何一步失败（Core 未就绪、模型缺失、参数报错）都静默回退到静态立绘，`body[data-live2d]` 标记当前模式，桌宠不会因为 Live2D 挂了而变空。
-- **状态映射**：`setState(status)` 把六态翻译成一组参数目标值（角度/眼开度/嘴型/眉高/身体倾斜/呼吸），每帧插值逼近，不是硬切。
-- **互动反馈**：`onInteract(zone)` 对头/脸/身/脚给不同的即时参数偏移，1.2 秒后回到当前状态。
-- **开口说话**：`speak()` 用正弦驱动 `ParamMouthOpenY`，不依赖 TTS。
-- **自检钩子**：`PET_STATE_TEST=error` 会强制切到某状态并保持，配合 `PET_SHOT=1` 截图核对。
+### 素材与构建
 
-技术栈与版本约束（踩过的坑）：
+```powershell
+npm run build:layers
+```
+
+前置：`assets/states/v2/aligned/state/state-idle.png`（睁眼闭嘴基准）+ 两张 AI 同姿势差分图（闭眼、张嘴）放在 `.tmp/ai-raw/`。差分图不入库。
+
+产出 `assets/pet-layers/`：4 张图层 + `meta.json`（画布尺寸、颈部切缝 `y=258`、旋转轴心、眼睛与嘴巴矩形）。
+
+### 渲染
+
+`renderer/pet-puppet.js` 用 PixiJS 组织四层，头、眼、嘴、身各自独立变换：
+
+- 头部容器的 `pivot` 设在脖子根部，旋转时才像「扭头」而不是「整体平移」
+- 眼睛锚点在**下沿**：眯眼时上眼睑向下压、下沿不动，符合真实半闭眼
+- 眼睛主要靠纵向压缩表现开合，只在接近完全闭合时才收 alpha——直接淡出会让半睁的眼睛发灰透明
+- 嘴巴锚点靠上唇，说话时按正弦节奏开合，不依赖 TTS
+- 呼吸以脚底为基准缩放，看起来像重心起伏而不是整体膨胀
+
+对外接口（`isReady` / `setState` / `setLook` / `speak` / `onInteract`）与原 Live2D 层完全一致，`pet.js` 无需改动。任何一步失败都静默回退静态立绘，`body[data-live2d]` 标记当前模式。
+
+自检：`PET_STATE_TEST=success PET_SHOT=1 npm start` 会强制切到某状态并截图，核对参数驱动是否生效。
+
+### Live2D 路线（保留，未启用）
+
+Phase 0 的技术验证仍然可用：`PET_LIVE2D_TEST=1 npm start` 会开一个独立验证窗，用官方示例模型 Hiyori 跑通 PixiJS + Cubism Core 4.2 渲染。相关代码在 `renderer/live2d-test.*` 与 `renderer/pet-live2d.js`。
+
+留着的意义：将来若真出了分层 PSD 并绑好骨骼，把 `index.html` 的脚本换回 `pet-live2d.js` 即可，其余不动。
 
 ```text
 PixiJS              6.5.10（pixi-live2d-display 0.4 只支持 v6）
 pixi-live2d-display 0.4.0（Cubism 4 运行时）
-Cubism Core         4.2.4（csmGetVersion=0x04020004）
+Cubism Core         4.2.4（csmGetVersion=0x04020004，官方 CDN 的 5.1 会让 Moc 解析返回空）
 ```
-
-- **Core 必须用 4.x**：官方 CDN 现在给的是 5.1，`Moc.fromArrayBuffer` 会直接返回空。本地放在 `renderer/vendor/live2dcubismcore.min.js`。
-- **模型文件走 `petasset://` 自定义协议**：`file://` 下 fetch 读 `.moc3` 会被 CORS 拦；协议层直接读磁盘并禁用缓存，否则替换素材后仍读到旧文件。
-- 验证页入口：`PET_LIVE2D_TEST=1 npm start`，会额外开一个测试窗，不影响桌宠本体。
 
 示例模型 Hiyori 来自 Live2D 官方 CubismWebSamples，按 Free Material License 使用，仅用于技术验证，不随角色一起分发。
 
@@ -203,10 +235,10 @@ Cubism Core         4.2.4（csmGetVersion=0x04020004）
 - [x] 插件化，对外提供 6 个工具
 - [x] 真实任务驱动的成功/失败播报全链路验证
 - [x] Live2D 渲染技术验证（Phase 0：PixiJS + Cubism Core 4.2 跑通）
-- [ ] 2.5D 化：分层素材 → 绑骨骼 → 接入六态（Phase 1–3）
+- [x] 2.5D 分层渲染：AI 表情差分 → 程序拆层 → PixiJS 分层驱动（扭头/眨眼/口型/视线）
+- [ ] 情绪表情接入（`assets/states/v2` 里已有 12 张表情立绘可做情绪切换）
 - [ ] 语音输入转写走本地 ASR（当前仅浏览器 SpeechRecognition 入口）
 - [ ] 仪表盘形态：任务列表与 Agent 状态面板
-- [ ] 2.5D 化（Live2D/Spine 骨骼 + 网格形变，替代静态帧切换）
 
 ## 已知未做
 

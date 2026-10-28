@@ -1,0 +1,25 @@
+{
+  "version": 2,
+  "source": "state-idle.png + AI 同姿势表情差分（闭眼 / 张嘴）",
+  "canvas": {
+    "width": 448,
+    "height": 841
+  },
+  "head": {
+    "cutY": 258,
+    "pivotX": 224,
+    "pivotY": 258
+  },
+  "eyes": {
+    "x": 145,
+    "y": 152,
+    "w": 159,
+    "h": 64
+  },
+  "mouth": {
+    "x": 202,
+    "y": 216,
+    "w": 47,
+    "h": 32
+  }
+}

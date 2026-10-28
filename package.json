@@ -8,7 +8,9 @@
     "smoke": "node test/e2e/pet-smoke.mjs",
     "test": "node --test test/memory.test.js test/pet-emotion.test.js test/pet-regions.test.js test/pet-runtime.test.js",
     "plugin:validate": "hermes plugins validate . --json",
-    "fetch:live2d": "node tools/fetch-live2d-assets.js"
+    "fetch:live2d": "node tools/fetch-live2d-assets.js",
+    "analyze:layers": "node tools/analyze-layers.js",
+    "build:layers": "node tools/build-pet-layers.js"
   },
   "keywords": [
     "desktop-pet",
