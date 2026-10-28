@@ -1146,7 +1146,9 @@ ipcMain.handle('session-chat', async (_e, text) => {
   setPetState('thinking', '思考中');
   const sentAt = Date.now();
   try {
-    const result = await hermesBridge.sessionChat(message);
+    const result = await hermesBridge.sessionChat(message, (delta) => {
+      if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.send('chat-delta', delta);
+    });
     if (!result.answer) throw new Error('Hermes 没有返回可显示的内容');
     recordSessionMessage(result.sessionId, 'user', message, sentAt);
     recordSessionMessage(result.sessionId, 'assistant', result.answer);
@@ -1155,10 +1157,10 @@ ipcMain.handle('session-chat', async (_e, text) => {
     setTimeout(() => {
     if (!petState.hermesOnline || !petState.runningCount) setPetState(statusFromSnapshot(previousHermes || { online: false }).status);
     }, 1200);
-    return { ok: true, answer: prepareUtterance(result.answer), sessionId: result.sessionId };
+    return { ok: true, answer: result.answer, sessionId: result.sessionId };
   } catch (error) {
     setPetState('error', '会话异常');
-    return { ok: false, error: prepareUtterance(error?.message || 'Hermes 会话请求失败') };
+    return { ok: false, error: error?.message || 'Hermes 会话请求失败' };
   } finally {
     chatBusy = false;
   }

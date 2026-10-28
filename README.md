@@ -141,6 +141,10 @@ hermes plugins install "file:///D:/01-项目/hermes-pet" --force --enable
 
 两个方向都不写库：插件不碰 SQLite，桌宠不复制看板，全部走 Hermes 已经开放的 HTTP 接口。
 
+> 唯一的例外是**对话**。Hermes 把「发一条消息」只开在 WebSocket 的 JSON-RPC 上（`prompt.submit`），
+> REST 侧只有读（`/api/sessions/{id}/messages`）。照着 REST 猜一个 POST 端点会一直 405。
+> 所以桌宠自己常驻一条 socket，细节和踩坑见 `hermes-chat.js` 顶部注释。
+
 ## 目录结构
 
 ```
@@ -150,6 +154,7 @@ renderer/               pet.html/pet.js 桌宠窗，chat.html/chat.js 聊天窗
                         pet-puppet.js 2.5D 分层渲染（当前使用）
                         pet-live2d.js Live2D 渲染层（备用，未启用）
 hermes-bridge.js        读取 Hermes gateway 状态、任务、会话、技能
+hermes-chat.js          对话通道：常驻 WebSocket + prompt.submit（REST 没有写入口）
 pet-emotion.js          心情与好感衰减
 pet-regions.js          四区热区命中（头/脸/身/脚）
 pet-runtime.js          六状态映射

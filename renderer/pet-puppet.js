@@ -39,6 +39,116 @@
   const imp = { rot: 0, dy: 0, lean: 0, jump: 0 };
   let blinkAt = -1, blinkQueue = 0;
 
+  /* ---------- 特效层 ----------
+   * 素材包里的 fx-* 符号（星、心、汗、感叹、省略号、音符、尘、羽毛）单独一层，
+   * 它不参与身体变换，所以能做出"从头顶飘走"的独立运动。 */
+  const FX_BASE = 'petasset://app/assets/fx/png/';
+  const FX_FILES = {
+    star: 'fx-star', heart: 'fx-heart', sweat: 'fx-sweat', exclaim: 'fx-exclaim',
+    ellipsis: 'fx-ellipsis', note: 'fx-note', question: 'fx-question', dust: 'fx-dust',
+    f1: 'fx-feather-1', f2: 'fx-feather-2', f3: 'fx-feather-3', f4: 'fx-feather-4'
+  };
+  // 状态 → 头顶常驻符号（working 不给，角色在忙的时候头顶再飘东西太吵）
+  const MOOD_FX = { idle: '', thinking: 'ellipsis', working: '', success: 'star', error: 'sweat', sleep: 'ellipsis' };
+
+  const FX = {};
+  const parts = [];
+  let fxLayer = null;
+  let moodSprite = null;
+  let moodKind = '';
+  let featherAt = 0, featherFrame = 0;
+  const MOOD_HOME = { x: 0, y: 0 };  // 屏幕坐标，fit() 里按窗口尺寸算
+  let GROUND_Y = 0;
+
+  function tint(sprite) {
+    // 素材符号是紫色描边，桌宠在浅色桌面上时略提亮一点更清楚
+    sprite.tint = 0xffffff;
+    return sprite;
+  }
+
+  function spawnFx(kind, opts = {}) {
+    const tex = FX[kind];
+    if (!tex || !fxLayer) return;
+    const sp = tint(new PIXI.Sprite(tex));
+    sp.anchor.set(0.5);
+    const base = opts.scale || 0.3;
+    sp.scale.set(base);
+    sp.x = Number.isFinite(opts.x) ? opts.x : MOOD_HOME.x + (Math.random() - 0.5) * 70;
+    sp.y = Number.isFinite(opts.y) ? opts.y : MOOD_HOME.y + 20 + Math.random() * 30;
+    sp.rotation = opts.rotation ?? (Math.random() - 0.5) * 0.3;
+    fxLayer.addChild(sp);
+    parts.push({
+      sp,
+      vx: opts.vx ?? (Math.random() - 0.5) * 0.9,
+      vy: opts.vy ?? -(0.6 + Math.random() * 0.6),
+      g: opts.g ?? 0.012,
+      spin: opts.spin ?? (Math.random() - 0.5) * 0.05,
+      age: 0,
+      life: opts.life ?? 1500,
+      s0: base,
+      s1: base * (opts.grow ?? 1.3)
+    });
+  }
+
+  function setMoodFx(next) {
+    const kind = MOOD_FX[next] || '';
+    if (kind === moodKind) return;
+    moodKind = kind;
+    if (moodSprite) {
+      fxLayer.removeChild(moodSprite);
+      moodSprite.destroy();
+      moodSprite = null;
+    }
+    if (!kind || !FX[kind] || !fxLayer) return;
+    moodSprite = tint(new PIXI.Sprite(FX[kind]));
+    moodSprite.anchor.set(0.5);
+    moodSprite.scale.set(0.34);
+    moodSprite.alpha = 0;
+    moodSprite.position.set(MOOD_HOME.x, MOOD_HOME.y);
+    fxLayer.addChild(moodSprite);
+  }
+
+  function updateFx(now, dt) {
+    if (moodSprite) {
+      moodSprite.alpha = Math.min(0.95, moodSprite.alpha + 0.06);
+      moodSprite.y = MOOD_HOME.y + Math.sin(now / 520) * 3.5;
+      moodSprite.rotation = Math.sin(now / 900) * 0.07;
+    }
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i];
+      p.age += dt * 16.667;
+      p.vy += p.g * dt;
+      p.sp.x += p.vx * dt;
+      p.sp.y += p.vy * dt;
+      p.sp.rotation += p.spin * dt;
+      const k = p.age / p.life;
+      const scale = p.s0 + (p.s1 - p.s0) * Math.min(1, k * 1.6);
+      p.sp.scale.set(scale);
+      p.sp.alpha = k < 0.12 ? k / 0.12 : 1 - Math.max(0, (k - 0.55) / 0.45);
+      if (k >= 1) {
+        fxLayer.removeChild(p.sp);
+        p.sp.destroy();
+        parts.splice(i, 1);
+      }
+    }
+    // 待机时偶尔飘一片羽毛，是"这个角色有羽毛"最省的暗示
+    if (state === 'idle' && fxLayer && now > featherAt) {
+      featherAt = now + 7000 + Math.random() * 9000;
+      const frame = ['f1', 'f2', 'f3', 'f4'][featherFrame++ % 4];
+      spawnFx(frame, {
+        x: MOOD_HOME.x - 40 + Math.random() * 80,
+        y: MOOD_HOME.y - 10,
+        vy: 0.35,
+        g: 0.004,
+        vx: 0.35 + Math.random() * 0.4,
+        spin: 0.012,
+        life: 4200,
+        scale: 0.22,
+        grow: 1.05
+      });
+    }
+  }
+
   function scheduleBlink(now) {
     blinkAt = now + 2800 + Math.random() * 3600;
     blinkQueue = Math.random() < 0.18 ? 1 : 0;
@@ -96,6 +206,28 @@
     // 脚底留一条屏幕空间给投影，否则影子会被窗口裁掉，角色又回到"浮着"的状态
     const shadowPad = Math.max(9, ch * s * 0.026);
     root.position.set(w / 2 - (cw * s) / 2, h - ch * s - shadowPad);
+
+    // 特效层挂在 stage 上，用屏幕像素定位：符号永远贴在角色右上方，不随缩放漂移
+    MOOD_HOME.x = w - Math.max(40, w * 0.13);
+    MOOD_HOME.y = h * 0.215;
+    GROUND_Y = h - shadowPad - 4;
+  }
+
+  /* 特效纹理是加分项：少几张不影响角色本体，缺了就当没有这个符号 */
+  async function loadFxTextures() {
+    const rows = await Promise.all(
+      Object.entries(FX_FILES).map(async ([key, name]) => {
+        try {
+          const tex = await loadTexture(`${FX_BASE}${name}@128.png`);
+          return [key, tex];
+        } catch {
+          return null;
+        }
+      })
+    );
+    for (const row of rows) if (row) FX[row[0]] = row[1];
+    moodKind = '';
+    if (state) setMoodFx(state);
   }
 
   async function init() {
@@ -183,11 +315,21 @@
       jumpC.addChild(breathe);
       if (shadowSprite) root.addChild(shadowSprite);
       root.addChild(jumpC);
+
+      // 特效独立一层，叠在角色之上，不参与身体变换
+      fxLayer = new PIXI.Container();
+      MOOD_HOME.x = 300;
+      // y 要避开窗口顶部那行状态胶囊，否则符号正好被它盖住
+      MOOD_HOME.y = 150;
+      app.stage.addChild(fxLayer);
+      featherAt = performance.now() + 5000;
+
       app.stage.addChild(root);
       fit();
       window.addEventListener('resize', fit);
 
       app.ticker.add(tick);
+      loadFxTextures();
 
       ready = true;
       document.body.dataset.live2d = 'on';
@@ -204,14 +346,29 @@
     }
   }
 
+  /* 弹簧积分：给倾角和位移一点过冲，角色才有"体重"。
+   * 纯 lerp 是等速趋近，看起来像被拖过去；弹簧会略微冲过再回来，像一块软肉。
+   * 眼睛和嘴不用弹簧——眨眼要利落，过冲会看着发抖。 */
+  const vel = { rot: 0, dy: 0, lean: 0 };
+  function springTo(key, targetV, k, damping) {
+    vel[key] = (vel[key] + (targetV - cur[key]) * k) * damping;
+    cur[key] += vel[key];
+  }
+
   function tick() {
     if (!ready) return;
     const now = performance.now();
+    const dt = Math.min(3, (app.ticker.deltaMS || 16.667) / 16.667);
 
     // 每 30 帧校正一次尺寸：跨屏 DPI 变化、窗口被系统微调时不一定有 resize 事件
     if ((tick.frames = (tick.frames || 0) + 1) % 30 === 0) fit();
 
-    for (const k of Object.keys(STATES.idle)) cur[k] = lerp(cur[k], target[k], 0.075);
+    springTo('rot', target.rot, 0.17, 0.74);
+    springTo('dy', target.dy, 0.16, 0.73);
+    springTo('lean', target.lean, 0.15, 0.75);
+    cur.eye = lerp(cur.eye, target.eye, 0.12);
+    cur.mouth = lerp(cur.mouth, target.mouth, 0.14);
+    cur.breath = lerp(cur.breath, target.breath, 0.05);
     lookCX = lerp(lookCX, lookX, 0.11);
     lookCY = lerp(lookCY, lookY, 0.11);
 
@@ -269,10 +426,12 @@
     /* 跳跃冲量 */
     jumpC.y = imp.jump;
 
-    imp.rot *= 0.9;
-    imp.dy *= 0.9;
-    imp.lean *= 0.92;
-    imp.jump *= 0.85;
+    imp.rot *= Math.pow(0.9, dt);
+    imp.dy *= Math.pow(0.9, dt);
+    imp.lean *= Math.pow(0.92, dt);
+    imp.jump *= Math.pow(0.85, dt);
+
+    updateFx(now, dt);
   }
 
   const api = {
@@ -282,6 +441,9 @@
       if (!STATES[next]) return;
       state = next;
       target = { ...STATES[next] };
+      setMoodFx(next);
+      if (next === 'success') spawnFx('star', { scale: 0.36, vy: -1.3, life: 1600 });
+      if (next === 'error') spawnFx('sweat', { scale: 0.3, vy: -0.4, g: 0.03 });
     },
     getState: () => state,
     setLook(x, y) {
@@ -296,14 +458,19 @@
       if (zone === 'head') {
         imp.rot = -10;
         imp.dy = -4;
+        spawnFx('heart', { scale: 0.3, x: MOOD_HOME.x - 60, y: MOOD_HOME.y + 30, vx: -0.5, vy: -0.9 });
+        spawnFx('heart', { scale: 0.24, x: MOOD_HOME.x - 30, y: MOOD_HOME.y + 40, vx: -0.2, vy: -1.1, life: 1800 });
       } else if (zone === 'face') {
         blinkAt = performance.now();
         blinkQueue = 1;
+        spawnFx('star', { scale: 0.26, x: MOOD_HOME.x - 70, y: MOOD_HOME.y + 50 });
       } else if (zone === 'body') {
         imp.lean = 5;
         imp.rot = 3;
+        spawnFx('note', { scale: 0.28, x: MOOD_HOME.x + 40, y: MOOD_HOME.y + 70, vy: -0.8 });
       } else if (zone === 'feet') {
         imp.jump = -14;
+        spawnFx('dust', { scale: 0.3, x: MOOD_HOME.x - 40, y: GROUND_Y, vy: 0.2, g: 0.03, life: 900 });
       }
       setTimeout(() => { imp.rot = 0; imp.dy = 0; imp.lean = 0; }, 700);
     }

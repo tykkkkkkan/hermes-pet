@@ -2,6 +2,36 @@
 
 ## 2026-10-28
 
+### 修好对话：改走 WebSocket 的 prompt.submit
+
+**问题**：聊天窗发消息一直回 `405 Method Not Allowed`（`/api/sessions/<id>/chat`）。
+
+**根因**：Hermes 把"发消息"开在 WebSocket 的 JSON-RPC 上，没有对应的 REST 端点。
+REST 只提供读（`/api/sessions/{id}/messages`），写必须走 `/api/ws` 的 `prompt.submit`。
+旧代码照着早期版本猜了一个 POST 端点，新版本关掉之后就一直 405。
+
+**做法**（新增 `hermes-chat.js`）：
+- 桌宠自己维持一条常驻 socket，先 `session.resume` 复用上次的会话，没有就 `session.create` 建一个叫「Hermes 桌宠」的会话，id 落在 `%LOCALAPPDATA%\hermes\hermes-pet-chat.json`
+- 发消息 = `prompt.submit`，回包立刻返回 `{status:"streaming"}`，正文靠 `message.delta` / `message.complete` 事件收
+- 一次回合的结束用"事件静默 900ms"判定，不猜固定事件名——长篇带工具调用的回复不会半截断掉
+- 45 秒心跳 `gateway.ping`；socket 断了自动重连并重新 resume（断线时宿主的回收器会把会话收回，不重建就会"会话不存在"）
+- 会话 id 分两种：`stored_session_id`（落盘、可跨进程恢复）与运行时短 id（socket 周期内有效），两个都收好
+
+**顺带**：
+- 聊天窗改成真流式：Hermes 边说边显示，末尾跟一根细光标，不再等整段返回
+- 历史消息顺序修正（接口本来就是升序，之前多了一次 reverse，最新消息跑到最上面）
+- 时间戳从秒级换算成毫秒，之前按毫秒解析会显示成 1970 年
+- 报错信息改成中文人话（"Hermes 连接断开了"/"这次想太久了"），不再把 405 原样甩给用户
+
+### 角色动效：弹簧 + 特效符号
+
+- 倾角与位移从等速插值改成弹簧积分，动作会轻微过冲再回来，有"体重"了；眼睛和嘴不用弹簧，眨眼要利落
+- 新增特效层（挂在 stage 上、屏幕像素定位，不随角色缩放漂移）：
+  - 状态符号：思考 = 省略号、成功 = 星星、出错 = 汗滴、休眠 = 省略号
+  - 待机时每 7-16 秒飘一片羽毛（4 帧循环，素材包 fx-feather）
+  - 互动反馈：摸头 = 爱心、摸脸 = 星星、摸身体 = 音符、摸脚 = 落地尘
+- `tools/preview-pet.js` 支持第二参数 `states`，一次出六态截图，用来核对符号位置
+
 ### 对话窗重做 + 角色立体化
 
 **对话窗**

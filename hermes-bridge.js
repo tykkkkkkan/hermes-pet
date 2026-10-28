@@ -1,5 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+const { PetConversation } = require('./hermes-chat');
+
+const conversation = new PetConversation();
 
 const HERMES_DIR = path.join(process.env.LOCALAPPDATA || '', 'hermes');
 const LEDGER_FILE = path.join(HERMES_DIR, 'spawn-ledger.json');
@@ -62,60 +65,18 @@ async function postJson(connection, endpoint, body) {
   return data;
 }
 
-async function getBotChatSession(connection) {
-  const listed = await getJson(connection, '/api/sessions?title=Bot%20Chat&include_hidden=true&limit=20');
-  const rows = Array.isArray(listed?.data) ? listed.data
-    : Array.isArray(listed?.sessions) ? listed.sessions : [];
-  const exact = rows.find((row) => row?.id && row.title === 'Bot Chat');
-  if (exact) return exact;
-
-  // headless serve 当前只开放既有会话，不能假设 POST /api/sessions 一定可用。
-  // 没有专属 Bot Chat 时复用 default profile 的活跃会话，保证桌宠和 Hermes 仍是同一条线。
-  const active = rows.find((row) => row?.id && row.is_active && (row.profile_name || row.profile) === 'default');
-  const fallback = rows
-    .filter((row) => row?.id && (row.profile_name || row.profile) === 'default')
-    .sort((a, b) => Number(b.last_active || 0) - Number(a.last_active || 0))[0];
-  const session = active || fallback;
-  if (session) return session;
-  throw new Error('Hermes 没有可用的 default 会话');
-}
-
-function normalizeSessionMessage(message) {
-  const content = message?.content;
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content.map((part) => typeof part === 'string' ? part : part?.text || '').join('');
-  }
-  return '';
-}
-
+// 对话不能走 REST：Hermes 只把它开在 WebSocket 的 JSON-RPC 上（prompt.submit）。
+// 细节与踩坑见 hermes-chat.js 顶部注释。
 async function sessionHistory() {
-  const connection = await connect();
-  const session = await getBotChatSession(connection);
-  const result = await getJson(connection, `/api/sessions/${encodeURIComponent(session.id)}/messages?limit=200&order=latest`);
-  const rows = Array.isArray(result?.data) ? result.data
-    : Array.isArray(result?.messages) ? result.messages : [];
-  return {
-    sessionId: session.id,
-    entries: rows.reverse().map((message) => ({
-      role: message.role === 'user' ? 'user' : message.role === 'assistant' ? 'assistant' : 'system',
-      content: normalizeSessionMessage(message),
-      at: message.timestamp || Date.now()
-    })).filter((row) => row.content)
-  };
+  try {
+    return await conversation.history();
+  } catch {
+    return { sessionId: '', entries: [] };
+  }
 }
 
-async function sessionChat(text) {
-  const connection = await connect();
-  const session = await getBotChatSession(connection);
-  const result = await postJson(connection, `/api/sessions/${encodeURIComponent(session.id)}/chat`, {
-    message: String(text || '').slice(0, 4000)
-  });
-  const message = result?.message || {};
-  return {
-    sessionId: session.id,
-    answer: normalizeSessionMessage(message) || String(result?.final_response || '').trim()
-  };
+async function sessionChat(text, onDelta) {
+  return conversation.chat(text, onDelta);
 }
 
 async function createTask(payload) {

@@ -62,6 +62,7 @@ contextBridge.exposeInMainWorld('pet', {
   onToast: (cb) => ipcRenderer.on('toast', (_e, text) => cb(text)),
   onState: (cb) => ipcRenderer.on('pet-state', (_e, state) => cb(state)),
   onAnnounce: (cb) => ipcRenderer.on('announce', (_e, text, options) => cb(text, options || {})),
+  onChatDelta: (cb) => ipcRenderer.on('chat-delta', (_e, delta) => cb(String(delta || ''))),
   formatUtterance: (text) => ipcRenderer.invoke('utterance-format', text),
   getState: () => ipcRenderer.invoke('pet-state-get'),
   getHermesSnapshot: () => ipcRenderer.invoke('hermes-snapshot-get'),

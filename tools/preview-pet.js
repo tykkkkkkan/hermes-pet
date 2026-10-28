@@ -78,10 +78,25 @@ app.whenReady().then(async () => {
   `);
 
   const shots = [];
-  for (const [label, look] of [['front', [0, 0]], ['right', [0.95, 0]], ['left', [-0.95, 0]]]) {
-    await win.webContents.executeJavaScript(`window.petLive2d.setLook(${look[0]}, ${look[1]}); true;`);
-    await new Promise((r) => setTimeout(r, 900));
+  // 第二参数传 states 时切状态截图，用来验状态符号与弹簧过渡；否则照旧出三视角
+  const statesMode = process.argv[3] === 'states';
+  const frames = statesMode
+    ? ['idle', 'thinking', 'working', 'success', 'error', 'sleep'].map((s) => [s, s])
+    : [['front', [0, 0]], ['right', [0.95, 0]], ['left', [-0.95, 0]]];
+  for (const [label, value] of frames) {
+    if (statesMode) {
+      await win.webContents.executeJavaScript(`window.petLive2d.setState(${JSON.stringify(value)}); true;`);
+      // 主进程每 3 秒推一次真实状态，等太久会被改回 idle，所以只留符号淡入的时间
+      await new Promise((r) => setTimeout(r, 420));
+    } else {
+      await win.webContents.executeJavaScript(`window.petLive2d.setLook(${value[0]}, ${value[1]}); true;`);
+      await new Promise((r) => setTimeout(r, 900));
+    }
     const img = await win.webContents.capturePage();
+    const fxDbg = await win.webContents
+      .executeJavaScript('JSON.stringify((window.__petPuppetDebug() || {}).fx || {})')
+      .catch(() => 'n/a');
+    console.log('[fx]', label, fxDbg);
     shots.push({ label, png: PNG.sync.read(img.toPNG()) });
   }
 

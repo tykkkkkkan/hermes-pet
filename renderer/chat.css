@@ -761,3 +761,20 @@ details.sgroup > summary + .grid { margin-top: 10px; }
 
 /* 欢迎语断行更均匀，避免最后一行只剩两三个字 */
 .welcome p { text-wrap: balance; }
+
+/* 流式输出：正文边生成边追加，末尾跟一根细光标 */
+.message.streaming .message-body::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 3px;
+  vertical-align: -0.14em;
+  background: currentColor;
+  opacity: 0.5;
+  animation: stream-caret 1s steps(2, end) infinite;
+}
+
+@keyframes stream-caret {
+  50% { opacity: 0; }
+}

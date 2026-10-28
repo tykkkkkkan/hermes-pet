@@ -6,6 +6,8 @@ let listening = false;
 let lastDayKey = '';
 let typingEl = null;
 let settingsCache = {};
+let streamRow = null;
+let streamText = '';
 
 async function addressed(text) {
   return window.pet.formatUtterance(text).catch(() => String(text || ''));
@@ -248,6 +250,8 @@ async function send(textOverride) {
   if (!text) return;
 
   sending = true;
+  streamRow = null;
+  streamText = '';
   $('send').disabled = true;
   addMessage('user', text, Date.now());
   input.value = '';
@@ -257,12 +261,31 @@ async function send(textOverride) {
   try {
     const result = await window.pet.sendHermesChat(text);
     hideTyping();
-    if (result.ok) addMessage('assistant', result.answer, Date.now());
-    else addMessage('assistant', result.error || '这条消息没有发出去。', Date.now());
+    if (result.ok) {
+      if (streamRow) {
+        // 流式那一条已经点出来了，用最终文本收口（避免和增量拼出来的有细微差异）
+        const body = streamRow.querySelector('.message-body');
+        if (body) body.innerHTML = renderMarkdown(result.answer);
+        streamRow.classList.remove('streaming');
+        scrollToEnd();
+      } else {
+        addMessage('assistant', result.answer, Date.now());
+      }
+    } else {
+      if (streamRow && !streamText.trim()) {
+        streamRow.remove();
+        streamRow = null;
+      }
+      addMessage('assistant', result.error || '这条消息没有发出去。', Date.now());
+    }
   } catch (error) {
     hideTyping();
+    if (streamRow && !streamText.trim()) { streamRow.remove(); streamRow = null; }
     addMessage('assistant', await addressed(error.message || '连接失败。'), Date.now());
   } finally {
+    if (streamRow) streamRow.classList.remove('streaming');
+    streamRow = null;
+    streamText = '';
     sending = false;
     $('send').disabled = false;
     input.focus();
@@ -590,6 +613,20 @@ window.pet.onOpenSettings(() => {
 });
 window.pet.onState(paintState);
 window.pet.onAnnounce((text) => addMessage('assistant', text, Date.now()));
+
+/* Hermes 是边说边生成的：第一个增量到达才把「正在输入」换成真气泡，之后逐段追加 */
+window.pet.onChatDelta((delta) => {
+  if (!sending || !delta) return;
+  if (!streamRow) {
+    hideTyping();
+    streamRow = addMessage('assistant', '', Date.now());
+    streamRow.classList.add('streaming');
+  }
+  streamText += delta;
+  const body = streamRow.querySelector('.message-body');
+  if (body) body.innerHTML = renderMarkdown(streamText);
+  scrollToEnd();
+});
 
 document.addEventListener('dragover', (event) => event.preventDefault());
 document.addEventListener('drop', (event) => {
