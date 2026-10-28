@@ -2,6 +2,33 @@
 
 ## 2026-10-28
 
+### 气泡换成素材 9-slice，三态着色
+
+**换掉的原因**：原来的气泡是 CSS 拼的（白底 + 1px 半透明边框 + 旋转 45° 的方块当尾巴），
+描边只有 1px、毛发感和素材包里的角色立绘不是一个精度。素材包 `05-UI件` 里本来就给了成套气泡。
+
+**做法**：
+- `bubble-normal / success / error` 480×160，按规格切 32，用 `border-image` 渲染成 12px 边框
+  （等比 0.375：圆角 10.5px、描边 1.5px），中间纯色区任意拉伸不变形
+- 尾巴是独立素材（48×26 朝下三角），`bottom: -20.25px` 让它压住气泡底边 1.5px，接缝不露白
+- 三种状态各出一份尾巴：`tools/tint-tail.js` 把描边色按目标色重绘（普通深紫 / 成功青绿 / 出错粉红）
+- 说话按 `kind` 换皮：任务完成走绿框、出错走粉框，其余白框
+- 透明角不能配 `box-shadow`（会照矩形画阴影），改用 `filter: drop-shadow`
+
+### 启动位置重新夹一遍
+
+**问题**：窗口从 224×372 长到 340×500 之后，启动落点还是老的右下角偏移，
+底边探出工作区 10px，脚底投影正好被任务栏吃掉。`position.json` 也只写不读，等于白存。
+
+**改法**：新增 `startPosition()`，读上次位置后用 `screen.getDisplayMatching` 找对应显示器的
+工作区夹一遍，底边贴住工作区；`snap-corner` 同步去掉多余的 +10。
+
+### 其他
+
+- 新增 `启动桌宠.bat`：双击启动的兜底入口（自动清掉会顶掉 GUI 的 `ELECTRON_RUN_AS_NODE`）
+- 新增 `tools/preview-bubble.js`（三态气泡对比图）、`tools/grab-screen.js`（截真实桌面验收）、
+  `tools/tint-tail.js`（尾巴按气泡颜色重绘）
+
 ### 修好对话：改走 WebSocket 的 prompt.submit
 
 **问题**：聊天窗发消息一直回 `405 Method Not Allowed`（`/api/sessions/<id>/chat`）。

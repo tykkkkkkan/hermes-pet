@@ -668,14 +668,34 @@ async function askModel(text) {
   return String(answer).trim();
 }
 
-function createWindow() {
+/* 启动落点：优先用上次拖到的位置，但要重新夹进工作区——
+ * 窗口从 224×372 长到 340×500 之后，旧坐标会把右下角顶到屏幕外，
+ * 脚底投影正好被任务栏吃掉。夹一遍就永远完整可见。 */
+function startPosition() {
   const { workArea } = screen.getPrimaryDisplay();
+  const fallback = {
+    x: workArea.x + workArea.width - WIN_W - 30,
+    y: workArea.y + workArea.height - WIN_H
+  };
+  const saved = readJson(path.join(dataDir(), 'position.json'), null);
+  if (!saved || !Number.isFinite(saved.x) || !Number.isFinite(saved.y)) return fallback;
+
+  const area = screen.getDisplayMatching({ x: saved.x, y: saved.y, width: WIN_W, height: WIN_H }).workArea;
+  // 下限留 0：底边贴着工作区，投影才在窗口内
+  return {
+    x: Math.round(Math.min(Math.max(saved.x, area.x), area.x + area.width - WIN_W)),
+    y: Math.round(Math.min(Math.max(saved.y, area.y), area.y + area.height - WIN_H))
+  };
+}
+
+function createWindow() {
+  const start = startPosition();
 
   win = new BrowserWindow({
     width: WIN_W,
     height: WIN_H,
-    x: workArea.x + workArea.width - WIN_W - 30,
-    y: workArea.y + workArea.height - WIN_H + 10,
+    x: start.x,
+    y: start.y,
     frame: false,
     transparent: true,
     resizable: false,
@@ -1106,9 +1126,10 @@ ipcMain.on('snap-corner', () => {
   if (!win) return;
   const { workArea } = screen.getPrimaryDisplay();
   const b = win.getBounds();
+  // 底边贴住工作区，别再多探 10px，否则脚底投影被任务栏压掉
   win.setPosition(
     workArea.x + workArea.width - b.width - 30,
-    workArea.y + workArea.height - b.height + 10
+    workArea.y + workArea.height - b.height
   );
 });
 

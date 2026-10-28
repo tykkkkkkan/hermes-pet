@@ -51,6 +51,10 @@ const LINES = [
 
 let bubbleTimer = null;
 function say(text, ms = 4200, options = {}) {
+  // 三态气泡（普通 / 成功 / 出错）：颜色只在开口那一刻定，避免说话中途换皮
+  bubble.classList.remove('tone-success', 'tone-error');
+  if (options.kind === 'success') bubble.classList.add('tone-success');
+  else if (options.kind === 'error') bubble.classList.add('tone-error');
   bubble.textContent = text;
   if (options.voice !== false) speakText(text);
   bubble.classList.remove('hidden');
@@ -71,9 +75,9 @@ function say(text, ms = 4200, options = {}) {
   }, ms);
 }
 
-async function sayAddressed(text, ms = 4200) {
+async function sayAddressed(text, ms = 4200, options = {}) {
   const addressed = await window.pet.formatUtterance(text).catch(() => text);
-  say(addressed, ms);
+  say(addressed, ms, options);
 }
 
 function bubbleVisible() {
@@ -195,7 +199,7 @@ petHitArea.addEventListener('drop', async (event) => {
   event.preventDefault();
   petEl.classList.remove('drop-target');
   const files = Array.from(event.dataTransfer?.files || []).filter((file) => file.path);
-  if (!files.length) return sayAddressed('没拿到文件路径，无法派发。打开聊天窗也能创建任务。', 5000);
+  if (!files.length) return sayAddressed('没拿到文件路径，无法派发。打开聊天窗也能创建任务。', 5000, { kind: 'error' });
   const title = files.length === 1 ? files[0].name : `处理 ${files.length} 个文件`;
   await sayAddressed(`收到「${title}」，正在交给 Hermes…`, 8000);
   const created = await window.pet.createTask({
@@ -203,15 +207,15 @@ petHitArea.addEventListener('drop', async (event) => {
     body: `请处理拖入的文件：${files.map((file) => file.name).join('、')}`,
     triage: true
   });
-  if (!created?.ok) return say(created?.error || '任务没建成：Hermes 暂不可用', 6500);
+  if (!created?.ok) return say(created?.error || '任务没建成：Hermes 暂不可用', 6500, { kind: 'error' });
   const task = created.task?.task || created.task || {};
   const taskId = task.id;
-  if (taskId == null) return sayAddressed('任务已创建，但 Hermes 没返回任务编号，附件未上传。', 6500);
+  if (taskId == null) return sayAddressed('任务已创建，但 Hermes 没返回任务编号，附件未上传。', 6500, { kind: 'error' });
   for (const file of files) {
     const uploaded = await window.pet.uploadTaskFile(taskId, file.path);
-    if (!uploaded?.ok) return say(uploaded?.error || `任务已建成，但「${file.name}」上传失败：未知错误`, 6500);
+    if (!uploaded?.ok) return say(uploaded?.error || `任务已建成，但「${file.name}」上传失败：未知错误`, 6500, { kind: 'error' });
   }
-  sayAddressed(`「${title}」已派发，${files.length} 个附件已交给 Hermes。`, 5200);
+  sayAddressed(`「${title}」已派发，${files.length} 个附件已交给 Hermes。`, 5200, { kind: 'success' });
 });
 
 /* ---------------- 右键菜单 ---------------- */
@@ -262,7 +266,7 @@ function paintState(state) {
 window.pet.onState(paintState);
 window.pet.getState().then(paintState).catch(() => {});
 window.pet.onAnnounce((text, options) => {
-  say(text, options.kind === 'error' ? 6000 : 4800, { voice: options.voice });
+  say(text, options.kind === 'error' ? 6000 : 4800, { voice: options.voice, kind: options.kind });
 });
 statePill.addEventListener('click', (e) => {
   e.stopPropagation();

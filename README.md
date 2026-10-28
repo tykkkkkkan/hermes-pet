@@ -165,7 +165,9 @@ plugin.yaml             插件清单（standalone）
 skills/hermes-pet/      插件自带的 SKILL.md
 assets/states/v2/       状态立绘、表情、特效（aligned 为对齐后的正式版）
 assets/pet-layers/      2.5D 分层素材：body/head/eyes/mouth + meta.json
-tools/                  拆层工具：imgutil / analyze-layers / build-pet-layers
+assets/ui/              头像、气泡三态 9-slice 与对应尾巴、图标
+tools/                  拆层与验收工具：imgutil / analyze-layers / build-pet-layers /
+                        preview-pet（三视角）/ preview-bubble（气泡三态）/ grab-screen（截桌面）
 test/                   unit + e2e 冒烟
 docs/                   规格书、对标差距、素材规格、实施指令
 ```

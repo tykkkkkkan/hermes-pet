@@ -262,42 +262,48 @@ body[data-live2d="on"] #pet.drowsy { animation: none; }
 }
 #pet.stretch { animation: stretch 1.6s cubic-bezier(.36, .07, .19, .97); }
 
-/* ---------- 气泡 ---------- */
+/* ---------- 气泡（素材 9-slice） ----------
+   素材 480×160，圆角 28、描边 4，切 32。
+   边框按 12px 渲染 = 0.375 倍：圆角 10.5px、描边 1.5px、尾巴高 26×0.375 = 9.75px。
+   三态只换图源不换切法，圆角与描边粗细才不会跳。 */
 #bubble {
   position: absolute;
   left: 14px;
   right: 14px;
   bottom: 76%;
-  padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.97);
-  color: #1f2328;
+  border: 12px solid transparent;
+  border-image: url("../assets/ui/bubble-normal.png") 32 fill / 12px stretch;
+  padding: 0 4px;
+  color: #241a35;
   font-size: 13px;
   line-height: 1.55;
-  border-radius: 14px;
-  border: 1px solid rgba(120, 108, 160, 0.35);
-  box-shadow: 0 6px 18px rgba(40, 30, 70, 0.18);
-  z-index: 6;
+  /* border-image 的角是透明的，box-shadow 会照着矩形画，只能用 drop-shadow 贴着实际轮廓 */
+  filter: drop-shadow(0 5px 12px rgba(40, 30, 70, 0.2));
   opacity: 0;
   transform: translateY(6px);
   transition: opacity 0.18s ease, transform 0.18s ease;
   pointer-events: none;
-  z-index: 5;
+  z-index: 6;
   word-break: break-word;
 }
 #bubble.show { opacity: 1; transform: translateY(0); }
+
+/* 尾巴叠在气泡底边上，压住 1.5px 描边，接缝才看不出 */
 #bubble::after {
   content: "";
   position: absolute;
   left: 50%;
-  bottom: -7px;
-  margin-left: -7px;
-  width: 14px;
-  height: 14px;
-  background: rgba(255, 255, 255, 0.97);
-  border-right: 1px solid rgba(120, 108, 160, 0.35);
-  border-bottom: 1px solid rgba(120, 108, 160, 0.35);
-  transform: rotate(45deg);
+  bottom: -20.25px; /* = -(尾巴高 9.75 + 下边框 12 - 压边 1.5) */
+  width: 18px;
+  height: 9.75px;
+  margin-left: -9px;
+  background: url("../assets/ui/bubble-tail-normal.png") 0 0 / 100% 100% no-repeat;
 }
+
+#bubble.tone-success { border-image-source: url("../assets/ui/bubble-success.png"); }
+#bubble.tone-success::after { background-image: url("../assets/ui/bubble-tail-success.png"); }
+#bubble.tone-error { border-image-source: url("../assets/ui/bubble-error.png"); }
+#bubble.tone-error::after { background-image: url("../assets/ui/bubble-tail-error.png"); }
 
 /* ---------- 右键菜单 ---------- */
 #menu {
