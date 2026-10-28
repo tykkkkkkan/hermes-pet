@@ -9,11 +9,18 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
-.pycache__/
-*.pyc
 .env
 .env.*
+
+# Python
+__pycache__/
+*.pyc
 
 # 素材处理中间产物
 .bak-flat/
 .tmp/
+
+# 运行期生成物
+shot.png
+test/e2e/artifacts/
+.codex/
