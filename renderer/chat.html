@@ -8,40 +8,70 @@
 </head>
 <body>
   <header id="titlebar">
-    <div>
-      <div class="eyebrow">HERMES PRIVATE CHANNEL</div>
-      <h1>Hermes <span id="connection-state">本地陪伴模式</span></h1>
+    <div class="brand">
+      <img class="brand-avatar" src="../assets/ui/avatar.png" alt="" />
+      <div class="brand-text">
+        <h1>Hermes</h1>
+        <p id="connection-state">正在连接…</p>
+      </div>
     </div>
-    <div class="window-actions">
-      <button id="task-btn" title="拖文件或创建任务">任务</button>
-      <button id="memory-btn" title="查看 Hermes 记忆">记忆</button>
-      <button id="skills-btn" title="查看 Hermes 技能">技能</button>
-      <button id="voice-btn" title="中文语音输入">听</button>
-      <button id="speak-btn" title="停止语音朗读">读</button>
-      <button id="settings-btn" title="设置">设置</button>
-      <button id="hide-btn" title="隐藏窗口">—</button>
-      <button id="close-btn" title="关闭窗口">×</button>
+
+    <div class="title-tools">
+      <span id="status-pill" class="status-pill" data-state="off">
+        <i></i><span id="status-text">Hermes 离线</span>
+      </span>
+
+      <div class="window-actions">
+        <button id="task-btn" class="icon-btn" title="派任务 · 可直接把文件拖进窗口" aria-label="派任务">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h7"/><path d="M17 15v6M14 18h6"/></svg>
+        </button>
+        <button id="memory-btn" class="icon-btn" title="看 Hermes 的记忆" aria-label="记忆">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M8 7h7M8 11h7"/></svg>
+        </button>
+        <button id="skills-btn" class="icon-btn" title="看 Hermes 已装的技能" aria-label="技能">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3 5 14h6l-1 7 8-11h-6z"/></svg>
+        </button>
+        <button id="voice-btn" class="icon-btn" title="中文语音输入" aria-label="语音输入">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+        </button>
+        <button id="speak-btn" class="icon-btn" title="停止朗读" aria-label="停止朗读">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19z"/><path d="M16 9.5 21 15M21 9.5 16 15"/></svg>
+        </button>
+        <button id="settings-btn" class="icon-btn" title="设置" aria-label="设置">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.1"/><path d="M19.3 14.9a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.56-1.1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.6 1.03z"/></svg>
+        </button>
+        <span class="divider"></span>
+        <button id="hide-btn" class="icon-btn window" title="收起来（桌宠还在）" aria-label="收起窗口">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>
+        </button>
+        <button id="close-btn" class="icon-btn window danger" title="关闭对话窗" aria-label="关闭窗口">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
     </div>
   </header>
 
   <main>
+    <div id="scrim" class="scrim hidden"></div>
+
     <section id="inspector" class="panel hidden">
       <div class="panel-head">
         <div>
           <h2 id="inspector-title">Hermes 数据</h2>
           <p id="inspector-hint">读取自 Hermes 本机目录</p>
         </div>
-        <button id="inspector-close" class="quiet">收起</button>
+        <button id="inspector-close" class="quiet small">收起</button>
       </div>
-      <div id="inspector-content"></div>
+      <div id="inspector-content" class="panel-scroll"></div>
     </section>
+
     <section id="setup" class="panel settings hidden">
       <div class="panel-head settings-head">
         <div>
           <h2>设置</h2>
           <p>外观与语音改动会立即生效，其余在保存后生效。</p>
         </div>
-        <button id="setup-close" class="quiet">关闭</button>
+        <button id="setup-close" class="quiet small">关闭</button>
       </div>
 
       <div class="settings-body">
@@ -140,13 +170,15 @@
           <h2>派一个活给 Hermes</h2>
           <p id="task-files">拖进来的文件会作为任务附件上传</p>
         </div>
-        <button id="task-cancel" class="quiet">取消</button>
+        <button id="task-cancel" class="quiet small">取消</button>
       </div>
-      <div class="grid">
-        <label class="wide">任务标题<input id="task-title" maxlength="240" /></label>
-        <label class="wide">要做什么<textarea id="task-body" rows="3" placeholder="写清楚目标和验收标准"></textarea></label>
-        <label>执行人<select id="task-assignee"></select></label>
-        <label>优先级<select id="task-priority"><option value="0">普通</option><option value="1">重要</option><option value="2">紧急</option></select></label>
+      <div class="panel-scroll">
+        <div class="grid">
+          <label class="wide">任务标题<input id="task-title" maxlength="240" /></label>
+          <label class="wide">要做什么<textarea id="task-body" rows="3" placeholder="写清楚目标和验收标准"></textarea></label>
+          <label>执行人<select id="task-assignee"></select></label>
+          <label>优先级<select id="task-priority"><option value="0">普通</option><option value="1">重要</option><option value="2">紧急</option></select></label>
+        </div>
       </div>
       <div class="setup-foot">
         <span id="task-msg" class="hint"></span>
@@ -155,12 +187,31 @@
     </section>
 
     <section id="chat" class="chat-shell">
+      <div id="welcome" class="welcome">
+        <div class="welcome-ring"><img src="../assets/ui/avatar.png" alt="" /></div>
+        <h2>我是赫尔墨兹</h2>
+        <p>守在桌面右下角。你派给 Hermes 的活我盯着进度，跑完了会来跟你说一声。</p>
+        <div class="quick">
+          <button data-ask="现在 Hermes 在跑什么？">现在在跑什么</button>
+          <button data-ask="今天 Hermes 都做了什么？">今天做了什么</button>
+          <button data-ask="帮我看一下我的记忆里有什么">看我的记忆</button>
+          <button data-act="task">派个活给她</button>
+        </div>
+      </div>
+
       <div id="messages"></div>
+
       <div id="composer">
-        <textarea id="input" rows="2" placeholder="和 Hermes 说点什么…"></textarea>
+        <div class="composer-box">
+          <textarea id="input" rows="1" placeholder="和 Hermes 说点什么…"></textarea>
+          <button id="send" class="primary send-btn" aria-label="发送">
+            <span>发送</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12 20 4l-7 16-2.4-6.5z"/></svg>
+          </button>
+        </div>
         <div class="composer-foot">
-          <span id="mood">心情 -- · 好感 --</span>
-          <button id="send" class="primary">发送</button>
+          <span id="mood" class="mood">心情 -- · 好感 --</span>
+          <span class="keys">Enter 发送 · Shift+Enter 换行</span>
         </div>
       </div>
     </section>

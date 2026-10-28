@@ -29,3 +29,6 @@ test/e2e/artifacts/
 renderer/vendor/live2dcubismcore*.js
 assets/live2d/
 live2d-test.png
+
+# 截图验收用的假数据页面（node tools/make-mock-chat.js 生成）
+renderer/_mock-chat.html
