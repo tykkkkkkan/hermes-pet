@@ -150,7 +150,7 @@
   }
 
   function scheduleBlink(now) {
-    blinkAt = now + 2800 + Math.random() * 3600;
+    blinkAt = now + 3000 + Math.random() * 5000;
     blinkQueue = Math.random() < 0.18 ? 1 : 0;
   }
 
@@ -159,7 +159,7 @@
     if (blinkAt < 0) { scheduleBlink(now); return 1; }
     if (now < blinkAt) return 1;
     const t = now - blinkAt;
-    const CLOSE = 58, TOTAL = 190;
+    const CLOSE = 95, TOTAL = 240;
     if (t <= TOTAL) return t < CLOSE ? 1 - t / CLOSE : (t - CLOSE) / (TOTAL - CLOSE);
     if (blinkQueue > 0) { blinkQueue--; blinkAt = now + 105; return 1; }
     scheduleBlink(now);
@@ -406,10 +406,10 @@
     /* 呼吸与重心摆动。
        身体横向位移与视线相反（对立式）：头往左看、身子微往右，
        才有"转身"的体积感，而不是整只角色一起平移。 */
-    const breath = Math.sin((now / 1080) * cur.breath) * 0.0085;
+    const breath = Math.sin((now / 570) * cur.breath) * 0.018;
     breathe.scale.y = 1 + breath;
     breathe.scale.x = 1 - breath * 0.45;
-    breathe.x = Math.sin(now / 2700) * 1.1 + cur.lean * 0.35 - lookCX * 1.5;
+    breathe.x = Math.sin(now / 1900) * 1.3 + cur.lean * 0.35 - lookCX * 1.5;
     breathe.rotation = -lookCX * 0.012;
 
     /* 投影：起跳时缩小变淡、呼吸时跟着起伏，影子是"离地"的唯一线索 */

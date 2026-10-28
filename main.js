@@ -47,13 +47,13 @@ let petState = {
   currentTask: null,
   agents: [],
   emotion: '平静',
-  address: '大哥',
+  address: '好大爹',
   affection: 50,
   mood: 72
 };
 
 const DEFAULT_SETTINGS = {
-  userName: '大哥',
+  userName: '好大爹',
   petName: '赫尔墨兹',
   persona: '你是 Hermes 的专属桌宠。你是可靠、机灵、略带执事感的伙伴，说话直接但有分寸。你会主动关心主人正在做的事，优先给出能执行的下一步，不说空话。',
   apiBase: 'https://api.deepseek.com/v1',
@@ -579,7 +579,7 @@ function loadPetState() {
     lastEmotionDecay: Number(saved.lastEmotionDecay) || lastSeen,
     lastInteraction: Number(saved.lastInteraction) || lastSeen,
     lastIgnoredAt: Number(saved.lastIgnoredAt) || 0,
-    address: saved.address || '大哥',
+    address: saved.address || '好大爹',
     hermesOnline: false,
     hermesText: 'Hermes 离线',
     runningCount: 0,

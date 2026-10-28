@@ -25,11 +25,11 @@ function blinkOnce() {
   if (dragging || bubbleVisible() || menuOpen) return;
   if ((petEl.dataset.state || 'idle') !== 'idle') return;
   petEl.classList.add('blink');
-  setTimeout(() => petEl.classList.remove('blink'), 95 + Math.random() * 45);
+  setTimeout(() => petEl.classList.remove('blink'), 85 + Math.random() * 35);
 }
 
 function scheduleBlink() {
-  const base = 2800 + Math.random() * 3600;   // 2.8 ~ 6.4 秒一次
+  const base = 3000 + Math.random() * 5000;   // 3 ~ 8 秒一次
   const doDouble = Math.random() < 0.2;        // 20% 概率双连眨
   const gap = doDouble ? base : base + Math.random() * 2400;
   setTimeout(() => {
@@ -41,7 +41,7 @@ function scheduleBlink() {
 
 /* ---------------- 台词 ---------------- */
 const LINES = [
-  '大哥，今天的活我看过了，随时能派。',
+  '好大爹，今天的活我看过了，随时能派。',
   '任务队列是空的，我在这儿候着。',
   '几个执行端都在，没掉线。',
   '本执事待命，说一声就动。',

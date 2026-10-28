@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { applyEvent, decay, chooseAddress } = require('../pet-emotion');
 
 const pool = [
-  { word: '大哥', weight: 30 },
+  { word: '好大爹', weight: 30 },
   { word: '板板', weight: 25 },
   { word: '老板', weight: 15 },
   { word: '小朋友', weight: 7 }
@@ -30,8 +30,8 @@ test('时间衰减逐小时回落，未满一小时不衰减', () => {
 });
 
 test('称呼按切换概率与情绪偏好选择，并避开连续重复', () => {
-  assert.equal(chooseAddress('得意', '大哥', pool, [], () => 0), '老板');
-  assert.equal(chooseAddress('得意', '老板', pool, ['老板', '老板'], () => 0), '大哥');
+  assert.equal(chooseAddress('得意', '好大爹', pool, [], () => 0), '老板');
+  assert.equal(chooseAddress('得意', '老板', pool, ['老板', '老板'], () => 0), '好大爹');
 });
 
 test('未知事件不破坏已有情绪状态', () => {

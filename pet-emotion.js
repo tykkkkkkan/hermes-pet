@@ -62,7 +62,7 @@ function decay(state = {}, now = Date.now(), random = Math.random) {
 
 function chooseAddress(emotion, current, pool = [], history = [], random = Math.random) {
   const valid = pool.filter((item) => item && typeof item.word === 'string' && item.word.trim());
-  if (!valid.length) return current || '大哥';
+  if (!valid.length) return current || '好大爹';
   const recent = history.slice(-2);
   const preferred = {
     '闹别扭': '小朋友',
