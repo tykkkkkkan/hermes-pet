@@ -94,6 +94,12 @@
 
   async function init() {
     if (ready || app) return ready;
+    // PET_LIVE2D=0 启动时 main 会带上 ?live2d=0，直接走静态立绘
+    if (new URLSearchParams(location.search).get('live2d') === '0') {
+      document.body.dataset.live2d = 'off';
+      console.log('[pet-live2d] 已按配置停用，使用静态立绘');
+      return false;
+    }
     try {
       if (!window.PIXI || !PIXI.live2d) throw new Error('PIXI.live2d 未加载');
       if (!(await waitCore())) throw new Error('Cubism Core 未就绪');

@@ -575,7 +575,10 @@ function createWindow() {
   });
 
   win.setAlwaysOnTop(true, 'screen-saver');
-  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  win.loadFile(path.join(__dirname, 'renderer', 'index.html'), {
+    // PET_LIVE2D=0 时停用 Live2D，直接回到静态立绘
+    query: process.env.PET_LIVE2D === '0' ? { live2d: '0' } : {}
+  });
   win.once('ready-to-show', () => win.show());
   win.webContents.on('console-message', (...args) => {
     const first = args[0];
