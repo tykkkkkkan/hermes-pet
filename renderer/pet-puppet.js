@@ -70,9 +70,24 @@
     return sp;
   }
 
+  /* 尺寸与缩放必须同源：之前用 window.innerWidth 算缩放，却没同步 canvas 尺寸。
+   * 窗口被拖动时 innerWidth 会漂移（实测 228 → 238），于是模型按新尺寸放大、
+   * 但画布还是旧尺寸，人物就被裁切甚至只剩中间一块。
+   * 现在统一以渲染容器（#pet）的实际尺寸为准，并在 DPI 变化时重设 resolution。 */
   function fit() {
-    if (!root || !meta) return;
-    const w = window.innerWidth, h = window.innerHeight;
+    if (!app || !root || !meta) return;
+    const host = app.view.parentElement || document.getElementById('pet-live2d-host');
+    const w = Math.max(1, host.clientWidth || window.innerWidth);
+    const h = Math.max(1, host.clientHeight || window.innerHeight);
+    const dpr = window.devicePixelRatio || 1;
+
+    const curW = Math.round(app.renderer.width / app.renderer.resolution);
+    const curH = Math.round(app.renderer.height / app.renderer.resolution);
+    if (curW !== w || curH !== h || app.renderer.resolution !== dpr) {
+      app.renderer.resolution = dpr;
+      app.renderer.resize(w, h);
+    }
+
     const cw = meta.canvas.width, ch = meta.canvas.height;
     const s = Math.min((w * 0.99) / cw, (h * 0.98) / ch);
     root.scale.set(s);
@@ -173,6 +188,9 @@
   function tick() {
     if (!ready) return;
     const now = performance.now();
+
+    // 每 30 帧校正一次尺寸：跨屏 DPI 变化、窗口被系统微调时不一定有 resize 事件
+    if ((tick.frames = (tick.frames || 0) + 1) % 30 === 0) fit();
 
     for (const k of Object.keys(STATES.idle)) cur[k] = lerp(cur[k], target[k], 0.075);
     lookCX = lerp(lookCX, lookX, 0.11);

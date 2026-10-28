@@ -133,6 +133,7 @@ petHitArea.addEventListener('mousedown', (e) => {
   moved = 0;
   lastSX = e.screenX;
   lastSY = e.screenY;
+  window.pet.dragBegin();
     petEl.style.animationPlayState = 'paused';
   e.preventDefault();
 });
@@ -142,18 +143,22 @@ window.addEventListener('mousemove', (e) => {
   const dx = e.screenX - lastSX;
   const dy = e.screenY - lastSY;
   if (dx || dy) {
-    window.pet.moveTo(dx, dy);
+    // 由主进程按光标绝对坐标定位，这里不再传增量，避免跨屏累积漂移
+    window.pet.dragMove();
     lastSX = e.screenX;
     lastSY = e.screenY;
     moved += Math.abs(dx) + Math.abs(dy);
   }
 });
 
-window.addEventListener('mouseup', () => {
+/* 拖拽收尾：正常 mouseup 走这里，窗口失焦 / 鼠标在窗外松开也兜底，
+ * 否则 dragging 会永久为 true——之后每次挪鼠标都在拖窗口，看起来就是「人乱跑后消失」。 */
+function endDrag(commit) {
   if (!dragging) return;
   dragging = false;
-    petEl.style.animationPlayState = '';
-  if (moved < 5) {
+  window.pet.dragEnd();
+  petEl.style.animationPlayState = '';
+  if (commit && moved < 5) {
     petEl.classList.add('hop');
     setTimeout(() => petEl.classList.remove('hop'), 520);
     const r = petHitArea.getBoundingClientRect();
@@ -163,6 +168,14 @@ window.addEventListener('mouseup', () => {
     window.petLive2d?.onInteract(zone);
     window.pet.interact(zone);
   }
+  // 拖拽期间跳过了穿透判断，松手后补一次，避免变成「拖完无法点击」
+  updateIgnore(lastX, lastY);
+}
+
+window.addEventListener('mouseup', () => endDrag(true));
+window.addEventListener('blur', () => endDrag(false));
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) endDrag(false);
 });
 
 /* ---------------- 拖文件创建 Hermes 任务 ---------------- */

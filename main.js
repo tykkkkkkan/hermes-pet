@@ -592,6 +592,47 @@ function createWindow() {
     }
   });
 
+  // 开发自检：PET_DRAG_TEST=1 模拟连续拖拽，核对窗口位置与画布尺寸是否稳定
+  if (process.env.PET_DRAG_TEST) {
+    setTimeout(async () => {
+      const probe = `(function(){
+        var c = document.querySelector('#pet-live2d-host canvas');
+        var r = c ? c.getBoundingClientRect() : null;
+        var pet = document.getElementById('pet');
+        return {
+          iw: window.innerWidth, ih: window.innerHeight, dpr: window.devicePixelRatio,
+          canvasCss: r ? Math.round(r.width) + 'x' + Math.round(r.height) : 'none',
+          canvasPx: c ? c.width + 'x' + c.height : 'none',
+          petTransform: pet ? getComputedStyle(pet).transform : 'none',
+          anim: pet ? getComputedStyle(pet).animationName : 'none',
+          animState: pet ? getComputedStyle(pet).animationPlayState : 'none',
+          classes: pet ? pet.className : ''
+        };
+      })()`;
+      const before = await win.webContents.executeJavaScript(probe);
+      console.log('drag[0] before:', JSON.stringify(before), 'pos:', JSON.stringify(win.getPosition()));
+      const step = Number(process.env.PET_DRAG_STEP) || 30;
+      for (let i = 1; i <= 40; i++) {
+        win.webContents.executeJavaScript(`window.pet.moveTo(${step}, 10)`).catch(() => {});
+        await new Promise((r) => setTimeout(r, 55));
+        if (i % 10 === 0) {
+          const p = win.getPosition();
+          console.log(`drag[${i}] pos:`, JSON.stringify(p));
+        }
+      }
+      const after = await win.webContents.executeJavaScript(probe);
+      console.log('drag[40] after:', JSON.stringify(after), 'pos:', JSON.stringify(win.getPosition()));
+      try {
+        fs.mkdirSync(path.join(__dirname, '.tmp'), { recursive: true });
+        const img = await win.capturePage();
+        fs.writeFileSync(path.join(__dirname, '.tmp', 'drag-shot.png'), img.toPNG());
+        console.log('drag shot saved');
+      } catch (e) {
+        console.log('drag shot failed:', e.message);
+      }
+    }, 3600);
+  }
+
   // 开发自检：PET_SHOT=1 时把窗口渲染结果存一张图，用来核对透明与排版
   if (process.env.PET_SHOT) {
     // PET_STATE_TEST=success/error/sleep… 可在截图前切一次状态，验证参数驱动是否生效
@@ -719,10 +760,50 @@ ipcMain.on('set-ignore', (_e, ignore) => {
 });
 
 // ---------- 拖拽 ----------
+/* 之前用「每次鼠标增量去 setPosition」，增量在跨屏 / DPI 切换时会漂移，
+ * 窗口会越拖越快，最后整块跑到屏幕外，用户就「找不回来了」。
+ * 现在改成：按下时记住光标相对窗口的抓取偏移，移动时直接用光标的绝对坐标定位，
+ * 并把落点夹在最近的显示器工作区内，保证至少露出一部分可再次抓取。 */
+let dragGrab = null;
+const MIN_VISIBLE = 56; // 拖出边界时至少留这么多像素在屏内
+
+function clampToWorkArea(x, y) {
+  const cursor = screen.getCursorScreenPoint();
+  const { workArea } = screen.getDisplayNearestPoint(cursor);
+  const nx = Math.max(
+    workArea.x - WIN_W + MIN_VISIBLE,
+    Math.min(workArea.x + workArea.width - MIN_VISIBLE, x)
+  );
+  const ny = Math.max(
+    workArea.y,
+    Math.min(workArea.y + workArea.height - MIN_VISIBLE, y)
+  );
+  return [Math.round(nx), Math.round(ny)];
+}
+
+ipcMain.on('drag-begin', () => {
+  if (!win) return;
+  const [x, y] = win.getPosition();
+  const c = screen.getCursorScreenPoint();
+  dragGrab = { x: c.x - x, y: c.y - y };
+});
+
+ipcMain.on('drag-move', () => {
+  if (!win || !dragGrab) return;
+  const c = screen.getCursorScreenPoint();
+  const [nx, ny] = clampToWorkArea(c.x - dragGrab.x, c.y - dragGrab.y);
+  win.setPosition(nx, ny);
+});
+
+ipcMain.on('drag-end', () => {
+  dragGrab = null;
+});
+
 ipcMain.on('move-to', (_e, x, y) => {
   if (!win) return;
   const [cx, cy] = win.getPosition();
-  win.setPosition(Math.round(cx + x), Math.round(cy + y));
+  const [nx, ny] = clampToWorkArea(cx + x, cy + y);
+  win.setPosition(nx, ny);
 });
 
 ipcMain.on('snap-corner', () => {
