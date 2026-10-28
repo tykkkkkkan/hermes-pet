@@ -280,7 +280,6 @@ body[data-live2d="on"] #pet-gesture { animation: none; }
 
 /* 15 个真动作：12 个热区动作 + 3 个陪伴动作。动作表提供动画名和时长。 */
 #pet-gesture.gesture-active {
-  animation-duration: calc(var(--gesture-ms, 900) * 1ms);
   animation-iteration-count: 1;
   animation-fill-mode: both;
 }
@@ -420,7 +419,7 @@ body[data-live2d="on"] #pet-gesture { animation: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #pet-gesture.gesture-active { animation-duration: .01ms; }
+  #pet-gesture.gesture-active { animation-duration: .01ms !important; }
   .fx-action, .fx-heart { animation-duration: .01ms; }
 }
 

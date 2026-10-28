@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const PORT = Number((process.argv.find((a) => a.startsWith('--port=')) || '').split('=')[1]) || 9333;
 const KEEP = process.argv.includes('--keep');
+const LONG = process.argv.includes('--long');
 // 桌宠可能已经在跑（单例锁会让新实例直接退出），隔离一份 userData 才能并行验收
 const ISOLATED = process.argv.includes('--isolated');
 const TMP_PROFILE = path.join(ROOT, '.tmp', 'smoke-profile');
@@ -235,17 +236,51 @@ async function main() {
       area.dispatchEvent(new MouseEvent('mousedown', event));
       window.dispatchEvent(new MouseEvent('mouseup', event));
       const immediate = { action: document.getElementById('pet-gesture').dataset.action || '', active: document.getElementById('pet-gesture').classList.contains('gesture-active') };
+      const before = document.getElementById('pet-gesture').getBoundingClientRect();
       await new Promise(r => setTimeout(r, 70));
       const gesture = document.getElementById('pet-gesture');
-      return { immediate, stateActive: document.getElementById('pet-state').className, action: gesture.dataset.action || '', active: gesture.classList.contains('gesture-active'), iteration: getComputedStyle(gesture).animationIterationCount, animation: getComputedStyle(gesture).animationName };
+      const after = gesture.getBoundingClientRect();
+      const style = getComputedStyle(gesture);
+      return { immediate, stateActive: document.getElementById('pet-state').className, action: gesture.dataset.action || '', active: gesture.classList.contains('gesture-active'), iteration: style.animationIterationCount, animation: style.animationName, duration: style.animationDuration, moved: Math.abs(after.top - before.top) + Math.abs(after.left - before.left) > 0.5, delta: { top: after.top - before.top, left: after.left - before.left } };
     })()`);
 
+    const allActionPlayback = await evaluate(cdp, `(async () => {
+      const gesture = document.getElementById('pet-gesture');
+      const actions = window.pet.actions || [];
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const out = [];
+      for (const action of actions) {
+        gesture.classList.remove('gesture-active');
+        delete gesture.dataset.action;
+        gesture.style.removeProperty('animation-duration');
+        gesture.dataset.action = action.id;
+        gesture.style.animationDuration = action.duration + 'ms';
+        void gesture.offsetWidth;
+        gesture.classList.add('gesture-active');
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const before = gesture.getBoundingClientRect();
+        const firstStyle = getComputedStyle(gesture);
+        await wait(Math.max(120, Math.min(400, action.duration * 0.4)));
+        const after = gesture.getBoundingClientRect();
+        out.push({ id: action.id, declared: action.duration, duration: firstStyle.animationDuration, animation: firstStyle.animationName, deltaTop: after.top - before.top, deltaLeft: after.left - before.left, moved: Math.abs(after.top - before.top) + Math.abs(after.left - before.left) > 0.5 });
+        gesture.classList.remove('gesture-active');
+        delete gesture.dataset.action;
+        gesture.style.removeProperty('animation-duration');
+        await wait(20);
+      }
+      return out;
+    })()`);
+    for (const item of allActionPlayback || []) {
+      console.log(`[动作] ${item.id} duration=${item.duration} declared=${item.declared}ms Δtop=${Number(item.deltaTop).toFixed(2)} Δleft=${Number(item.deltaLeft).toFixed(2)} animation=${item.animation}`);
+    }
+    check('十五个动作逐个有非零时长并产生位移', allActionPlayback?.length === 15 && allActionPlayback.every((item) => Number.parseFloat(item.duration) > 0.1 && item.moved), JSON.stringify(allActionPlayback));
+
     const headAction = await triggerZone('head');
-    check('点头动作单次播放且不抢呼吸', headAction?.immediate?.active && headAction.immediate?.action && headAction.iteration === '1', JSON.stringify(headAction));
+    check('点头动作单次播放且不抢呼吸', headAction?.immediate?.active && headAction.immediate?.action && headAction.iteration === '1' && Number.parseFloat(headAction.duration) > 0.1 && headAction.moved, JSON.stringify(headAction));
     check('点头截图', await capture(cdp, path.join(ART, 'pet-action-head.png')), 'test/e2e/artifacts/pet-action-head.png');
 
     const feetAction = await triggerZone('feet');
-    check('点脚动作单次播放', feetAction?.immediate?.active && feetAction?.immediate?.action && feetAction.iteration === '1', JSON.stringify(feetAction));
+    check('点脚动作单次播放', feetAction?.immediate?.active && feetAction?.immediate?.action && feetAction.iteration === '1' && Number.parseFloat(feetAction.duration) > 0.1 && feetAction.moved, JSON.stringify(feetAction));
     check('点脚截图', await capture(cdp, path.join(ART, 'pet-action-feet.png')), 'test/e2e/artifacts/pet-action-feet.png');
 
     await evaluate(cdp, `window.pet.setStatus('working'); true`);
@@ -261,6 +296,43 @@ async function main() {
     check('减少动态下动作能降级并清理', reduced?.immediate?.active && reduced?.iteration === '1' && reducedAfter === false, JSON.stringify({ reduced, reducedAfter }));
     await cdp.send('Emulation.setEmulatedMedia', { features: [] });
     await evaluate(cdp, `window.pet.setStatus('idle'); true`);
+
+    if (LONG) {
+      await sleep(4500);
+      const idleRun = await evaluate(cdp, `(async () => {
+        const gesture = document.getElementById('pet-gesture');
+        const actions = Object.fromEntries((window.pet.actions || []).map((action) => [action.id, action.duration]));
+        const records = [];
+        const started = performance.now();
+        let active = null;
+        while (performance.now() - started < 42000) {
+          const now = performance.now();
+          const isActive = gesture.classList.contains('gesture-active');
+          const action = gesture.dataset.action || '';
+          if (isActive && !active) active = { action, at: now };
+          if (!isActive && active) {
+            const elapsed = now - active.at;
+            records.push({ action: active.action, elapsed, declared: actions[active.action] || 0, delta: elapsed - (actions[active.action] || 0) });
+            active = null;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return records;
+      })()`);
+      for (const item of idleRun || []) console.log(`[待机] ${item.action} elapsed=${item.elapsed.toFixed(0)}ms declared=${item.declared}ms Δ=${item.delta.toFixed(0)}ms`);
+      check('待机四十二秒动作持续时间接近声明值', idleRun?.length >= 2 && idleRun.every((item) => Math.abs(item.delta) <= 100), JSON.stringify(idleRun));
+
+      const tripleLines = {};
+      for (const zone of ['head', 'face', 'body', 'feet']) {
+        tripleLines[zone] = [];
+        for (let i = 0; i < 3; i++) {
+          await triggerZone(zone);
+          await sleep(900);
+          tripleLines[zone].push(await evaluate(cdp, "document.getElementById('bubble').textContent"));
+        }
+        check(`${zone} 区连续三次台词不复读`, new Set(tripleLines[zone]).size === 3, JSON.stringify(tripleLines[zone]));
+      }
+    }
 
     check('待机截图', await capture(cdp, path.join(ART, 'pet-action-idle.png')), 'test/e2e/artifacts/pet-action-idle.png');
 

@@ -369,6 +369,7 @@ function clearGesture() {
   gestureAnimationHandler = null;
   gestureEl.classList.remove('gesture-active');
   delete gestureEl.dataset.action;
+  gestureEl.style.removeProperty('animation-duration');
 }
 
 function spawnActionEffect(effect) {
@@ -390,7 +391,8 @@ function playAction(group) {
   clearGesture();
   lastActionId = action.id;
   gestureEl.dataset.action = action.id;
-  gestureEl.style.setProperty('--gesture-ms', action.duration);
+  // 直接写带单位的内联值；当前 Electron 对 calc(var(--x) * 1ms) 会求值成 0s。
+  gestureEl.style.animationDuration = `${action.duration}ms`;
   void gestureEl.offsetWidth;
   gestureEl.classList.add('gesture-active');
   spawnActionEffect(action.effect);
