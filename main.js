@@ -419,6 +419,37 @@ function getApiKey(settings = loadSettings()) {
   }
 }
 
+/* 从 Hermes 的 .env 导入 DeepSeek 密钥，省得再手填一遍。
+ * 只在桌宠自己还没配密钥时自动执行；也可以从设置面板手动触发。 */
+function importKeyFromHermes() {
+  const envPath = path.join(process.env.LOCALAPPDATA || '', 'hermes', '.env');
+  try {
+    if (!fs.existsSync(envPath)) return { ok: false, reason: '没找到 Hermes 的 .env' };
+    const raw = fs.readFileSync(envPath, 'utf8');
+    const pick = (name) => {
+      const m = raw.match(new RegExp('^\\s*' + name + '\\s*=\\s*(.+)$', 'm'));
+      return m ? m[1].trim().replace(/^["']|["']$/g, '') : '';
+    };
+    const key = pick('DEEPSEEK_API_KEY');
+    if (!key) return { ok: false, reason: '.env 里没有 DEEPSEEK_API_KEY' };
+    if (!safeStorage.isEncryptionAvailable()) return { ok: false, reason: '系统加密存储不可用' };
+
+    const base = pick('DEEPSEEK_API_BASE') || 'https://api.deepseek.com/v1';
+    const current = loadSettings();
+    const next = {
+      ...current,
+      apiBase: base,
+      model: current.model || 'deepseek-chat',
+      apiKeyCipher: safeStorage.encryptString(key).toString('base64')
+    };
+    writeJson(settingsFile(), next);
+    console.log(`[hermes-pet] 已从 Hermes 导入 DeepSeek 密钥（长度 ${key.length}，base ${base}）`);
+    return { ok: true, base, keyLength: key.length };
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  }
+}
+
 function saveSettings(input = {}) {
   const current = loadSettings();
   const clamp = (v, lo, hi, fallback) => {
@@ -954,7 +985,7 @@ function openMenuWindow() {
   if (!win) return;
   if (menuWin && !menuWin.isDestroyed()) { closeMenuWindow(); return; }
 
-  const MENU_W = 186, MENU_H = 356;
+  const MENU_W = 206, MENU_H = 472;
   const [wx, wy] = win.getPosition();
   const { workArea } = screen.getDisplayNearestPoint({ x: wx, y: wy });
 
@@ -1164,6 +1195,11 @@ ipcMain.handle('settings-save', (_e, input) => {
 ipcMain.on('appearance-preview', (_e, input) => {
   applyAppearanceValues(input && input.petScale, input && input.petOpacity);
 });
+// 手动从 Hermes 导入密钥
+ipcMain.handle('import-key', () => {
+  const r = importKeyFromHermes();
+  return { ...r, settings: publicSettings() };
+});
 ipcMain.handle('history-get', () => loadHistory());
 ipcMain.handle('chat-send', async (_e, text) => {
   const message = String(text || '').trim().slice(0, 4000);
@@ -1244,6 +1280,11 @@ if (!gotLock) {
 
     fs.mkdirSync(HERMES_DIR, { recursive: true });
     petState = loadPetState();
+    // 首次启动若还没有密钥，直接从 Hermes 的 .env 里搬过来，省得手填
+    if (!loadSettings().apiKeyCipher) {
+      const imported = importKeyFromHermes();
+      console.log('[hermes-pet] 自动导入密钥：', imported.ok ? '成功' : `跳过（${imported.reason}）`);
+    }
     createWindow();
     createTray();
     startBridgeServer();

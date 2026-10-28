@@ -376,6 +376,18 @@ if (window.speechSynthesis) {
   speechSynthesis.onvoiceschanged = () => fillVoiceOptions($('voice-name').value);
 }
 
+/* 从 Hermes 的 .env 导入 DeepSeek 密钥 */
+$('import-key').addEventListener('click', async () => {
+  const r = await window.pet.importKey();
+  if (r && r.ok) {
+    $('setup-msg').textContent = `已从 Hermes 导入密钥（${r.keyLength} 位），地址 ${r.base}`;
+    $('connection-state').textContent = 'DeepSeek 已连接';
+    await loadSettings();
+  } else {
+    $('setup-msg').textContent = '导入失败：' + ((r && r.reason) || '未知原因');
+  }
+});
+
 /* 从右键菜单进来时直接展开设置 */
 window.pet.onOpenSettings(() => {
   $('setup').classList.remove('hidden');

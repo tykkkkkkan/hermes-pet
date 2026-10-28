@@ -312,3 +312,12 @@ details.sgroup > summary::before {
 details.sgroup[open] > summary::before { transform: rotate(90deg); }
 details.sgroup > summary h3 { margin: 0; }
 details.sgroup > summary + .grid { margin-top: 10px; }
+
+.key-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}

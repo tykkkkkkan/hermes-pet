@@ -46,3 +46,19 @@ body {
   margin: 5px 6px;
   background: rgba(120, 108, 160, 0.22);
 }
+
+/* 可切换项的状态值 */
+.mi .st {
+  float: right;
+  margin-left: 14px;
+  color: #5d50a6;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.mi .st.off {
+  color: #9a93b0;
+  font-weight: 400;
+}
+
+.mi.switchable:hover .st { color: #4a3f96; }

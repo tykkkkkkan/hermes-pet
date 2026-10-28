@@ -75,6 +75,7 @@ contextBridge.exposeInMainWorld('pet', {
   getSettings: () => ipcRenderer.invoke('settings-get'),
   saveSettings: (input) => ipcRenderer.invoke('settings-save', input),
   previewAppearance: (input) => ipcRenderer.send('appearance-preview', input),
+  importKey: () => ipcRenderer.invoke('import-key'),
   onAppearance: (cb) => ipcRenderer.on('appearance', (_e, v) => cb(v)),
   onSettingsChanged: (cb) => ipcRenderer.on('settings-changed', (_e, v) => cb(v)),
   getHistory: () => ipcRenderer.invoke('history-get'),
