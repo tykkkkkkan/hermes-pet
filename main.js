@@ -1,4 +1,6 @@
 const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, shell, globalShortcut, safeStorage, Notification } = require('electron');
+const http = require('http');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const hermesBridge = require('./hermes-bridge');
@@ -20,6 +22,8 @@ let hermesTimer = null;
 let hermesPollInFlight = false;
 let previousHermes = null;
 let successUntil = 0;
+let bridgeServer = null;
+let bridgeToken = '';
 let persona = readJson(PERSONA_FILE, {});
 let petState = {
   status: 'idle',
@@ -146,6 +150,135 @@ function interactionLine(zone, mood) {
   const region = persona.touchReactions?.[zone] || persona.touchReactions?.body;
   const moodKey = mood >= 45 ? 'good' : 'bad';
   return String(region?.[moodKey] || '{address}，有事直说，别只戳我');
+}
+
+function bridgeFile() {
+  return path.join(HERMES_DIR, 'hermes-pet-bridge.json');
+}
+
+function bridgeJson(res, status, payload) {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify(payload));
+}
+
+function bridgeAuthorized(req) {
+  const value = String(req.headers.authorization || '');
+  return value === `Bearer ${bridgeToken}`;
+}
+
+function readBridgeBody(req) {
+  return new Promise((resolve, reject) => {
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => {
+      raw += chunk;
+      if (raw.length > 100000) reject(new Error('请求体过大'));
+    });
+    req.on('end', () => {
+      if (!raw.trim()) return resolve({});
+      try { resolve(JSON.parse(raw)); } catch { reject(new Error('请求体不是有效 JSON')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+function bridgeState() {
+  return {
+    ...petState,
+    pid: process.pid,
+    visible: !!(win && !win.isDestroyed() && win.isVisible()),
+    chatVisible: !!(chatWin && !chatWin.isDestroyed() && chatWin.isVisible())
+  };
+}
+
+function interactPet(zone) {
+  const line = interactionLine(String(zone || 'body'), petState.mood);
+  applyEmotionEvent('touched');
+  petState.lastInteraction = Date.now();
+  petState.mood = Math.min(100, petState.mood + 1);
+  petState.affection = Math.min(100, petState.affection + 1);
+  savePetState();
+  pushPetState();
+  announce(line, { kind: 'interaction', userInitiated: true });
+}
+
+function startBridgeServer() {
+  bridgeToken = crypto.randomBytes(32).toString('hex');
+  bridgeServer = http.createServer(async (req, res) => {
+    if (!bridgeAuthorized(req)) return bridgeJson(res, 401, { ok: false, error: '未授权的桌宠桥接请求' });
+    const url = new URL(req.url || '/', 'http://127.0.0.1');
+    try {
+      if (req.method === 'GET' && url.pathname === '/health') {
+        return bridgeJson(res, 200, { ok: true, pid: process.pid, version: app.getVersion() });
+      }
+      if (req.method === 'GET' && url.pathname === '/state') {
+        return bridgeJson(res, 200, { ok: true, state: bridgeState() });
+      }
+      if (req.method !== 'POST') return bridgeJson(res, 404, { ok: false, error: '桥接路径不存在' });
+      const body = await readBridgeBody(req);
+      if (url.pathname === '/say') {
+        const text = String(body.text || '').trim().slice(0, 2000);
+        if (!text) return bridgeJson(res, 400, { ok: false, error: '播报内容不能为空' });
+        announce(text, {
+          kind: String(body.kind || 'plugin').slice(0, 40),
+          notify: body.notify === true,
+          taskResult: body.taskResult === true,
+          userInitiated: true,
+          source: 'hermes-plugin'
+        });
+        return bridgeJson(res, 200, { ok: true, state: bridgeState() });
+      }
+      if (url.pathname === '/status') {
+        const status = String(body.status || 'idle').toLowerCase();
+        if (!['idle', 'thinking', 'working', 'success', 'error', 'sleep'].includes(status)) {
+          return bridgeJson(res, 400, { ok: false, error: '不支持的桌宠状态' });
+        }
+        setPetState(status, String(body.statusText || '').slice(0, 80) || undefined);
+        return bridgeJson(res, 200, { ok: true, state: bridgeState() });
+      }
+      if (url.pathname === '/interact') {
+        if (!['head', 'face', 'body', 'feet'].includes(String(body.zone || ''))) {
+          return bridgeJson(res, 400, { ok: false, error: '不支持的互动区域' });
+        }
+        interactPet(body.zone);
+        return bridgeJson(res, 200, { ok: true, state: bridgeState() });
+      }
+      if (url.pathname === '/open-chat') {
+        showChat();
+        return bridgeJson(res, 200, { ok: true, state: bridgeState() });
+      }
+      if (url.pathname === '/show') {
+        showPet();
+        return bridgeJson(res, 200, { ok: true, state: bridgeState() });
+      }
+      if (url.pathname === '/hide') {
+        if (win && !win.isDestroyed()) win.hide();
+        return bridgeJson(res, 200, { ok: true, state: bridgeState() });
+      }
+      return bridgeJson(res, 404, { ok: false, error: '桥接路径不存在' });
+    } catch (error) {
+      return bridgeJson(res, 500, { ok: false, error: String(error?.message || error) });
+    }
+  });
+  bridgeServer.on('error', (error) => console.error('[hermes-pet] bridge error:', error.message));
+  bridgeServer.listen(0, '127.0.0.1', () => {
+    const address = bridgeServer.address();
+    writeJson(bridgeFile(), {
+      pid: process.pid,
+      port: address.port,
+      token: bridgeToken,
+      startedAt: Date.now(),
+      appPath: __dirname
+    });
+    console.log(`[hermes-pet] bridge listening on 127.0.0.1:${address.port}`);
+  });
+}
+
+function stopBridgeServer() {
+  try { bridgeServer?.close(); } catch {}
+  bridgeServer = null;
+  bridgeToken = '';
+  try { fs.unlinkSync(bridgeFile()); } catch {}
 }
 
 function applyHermesSnapshot(snapshot) {
@@ -609,14 +742,7 @@ ipcMain.handle('memory-get', async () => ({
 }));
 ipcMain.handle('skills-get', () => hermesBridge.skillSnapshot());
 ipcMain.on('pet-interact', (_e, zone) => {
-  const line = interactionLine(String(zone || 'body'), petState.mood);
-  applyEmotionEvent('touched');
-  petState.lastInteraction = Date.now();
-  petState.mood = Math.min(100, petState.mood + 1);
-  petState.affection = Math.min(100, petState.affection + 1);
-  savePetState();
-  pushPetState();
-  announce(line, { kind: 'interaction', userInitiated: true });
+  interactPet(zone);
 });
 ipcMain.handle('settings-get', () => publicSettings());
 ipcMain.handle('settings-save', (_e, input) => {
@@ -675,6 +801,7 @@ if (!gotLock) {
     petState = loadPetState();
     createWindow();
     createTray();
+    startBridgeServer();
     startHermesPolling();
     globalShortcut.register('CommandOrControl+Shift+H', showChat);
   });
@@ -688,5 +815,6 @@ app.on('window-all-closed', (e) => {
 app.on('activate', () => showPet());
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  stopBridgeServer();
   savePetState();
 });
