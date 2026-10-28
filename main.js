@@ -180,7 +180,9 @@ function interactionLine(zone, mood) {
 }
 
 function bridgeFile() {
-  return path.join(HERMES_DIR, 'hermes-pet-bridge.json');
+  // 冒烟测试要在桌宠已经跑着的时候再起一个实例，两者共用同一个桥接文件会互相顶掉端口，
+  // 所以允许测试用环境变量把它引到别处。
+  return process.env.PET_BRIDGE_FILE || path.join(HERMES_DIR, 'hermes-pet-bridge.json');
 }
 
 function bridgeJson(res, status, payload) {

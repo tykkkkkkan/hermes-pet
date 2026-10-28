@@ -9,6 +9,9 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const PORT = Number((process.argv.find((a) => a.startsWith('--port=')) || '').split('=')[1]) || 9333;
 const KEEP = process.argv.includes('--keep');
+// 桌宠可能已经在跑（单例锁会让新实例直接退出），隔离一份 userData 才能并行验收
+const ISOLATED = process.argv.includes('--isolated');
+const TMP_PROFILE = path.join(ROOT, '.tmp', 'smoke-profile');
 const ART = path.join(ROOT, 'test/e2e/artifacts');
 
 const results = [];
@@ -71,8 +74,15 @@ async function main() {
   fs.mkdirSync(ART, { recursive: true });
   console.log(`启动 Electron（调试端口 ${PORT}）…`);
   const electronBin = createRequire(import.meta.url)('electron'); // 拿到真正的 electron 可执行文件路径
-  const child = spawn(electronBin, ['.', `--remote-debugging-port=${PORT}`], {
-    cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1' },
+  const extraArgs = ISOLATED ? [`--user-data-dir=${TMP_PROFILE}`] : [];
+  const child = spawn(electronBin, ['.', `--remote-debugging-port=${PORT}`, ...extraArgs], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      ELECTRON_ENABLE_LOGGING: '1',
+      ...(ISOLATED ? { PET_BRIDGE_FILE: path.join(ROOT, '.tmp', 'smoke-bridge.json') } : {}),
+    },
   });
   child.on('error', (e) => { console.error('启动 Electron 失败:', e.message); });
   let stderr = '';
