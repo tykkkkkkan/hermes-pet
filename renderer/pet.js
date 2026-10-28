@@ -54,6 +54,7 @@ function say(text, ms = 4200) {
   bubble.textContent = text;
   bubble.classList.remove('hidden');
   requestAnimationFrame(() => bubble.classList.add('show'));
+  window.petLive2d?.speak();
   petEl.classList.remove('squish');
   void petEl.offsetWidth;
   petEl.classList.add('squish');
@@ -110,6 +111,7 @@ window.addEventListener('mousemove', (e) => {
   const lookY = Math.max(-1, Math.min(1, (e.clientY - (bounds.top + bounds.height / 2)) / (bounds.height / 2)));
   petEl.style.setProperty('--look-x', `${(lookX * 2.2).toFixed(1)}px`);
   petEl.style.setProperty('--look-y', `${(lookY * 1.8).toFixed(1)}px`);
+  window.petLive2d?.setLook(lookX, lookY);
   if (dragging) return;
   updateIgnore(e.clientX, e.clientY);
 });
@@ -157,7 +159,9 @@ window.addEventListener('mouseup', () => {
     const r = petHitArea.getBoundingClientRect();
     const x = (lastX - r.left) / r.width;
     const y = (lastY - r.top) / r.height;
-    window.pet.interact(hitPetRegion(x, y));
+    const zone = hitPetRegion(x, y);
+    window.petLive2d?.onInteract(zone);
+    window.pet.interact(zone);
   }
 });
 
@@ -226,6 +230,7 @@ function paintState(state) {
   petEl.classList.toggle('success', s.status === 'success');
   petEl.classList.toggle('error', s.status === 'error');
   petEl.classList.toggle('sleep', s.status === 'sleep');
+  window.petLive2d?.setState(bodyState);
   panelOnline.textContent = s.hermesOnline ? `在线 · ${s.port ? `端口 ${s.port}` : '服务正常'}` : '离线（等待 Hermes 服务）';
   panelEmotion.textContent = `${s.emotion || '平静'} · ${s.address || '大哥'}`;
   panelRunning.textContent = s.runningCount || 0;

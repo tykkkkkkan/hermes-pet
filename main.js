@@ -577,6 +577,11 @@ function createWindow() {
   win.setAlwaysOnTop(true, 'screen-saver');
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.once('ready-to-show', () => win.show());
+  win.webContents.on('console-message', (...args) => {
+    const first = args[0];
+    const message = first && typeof first === 'object' && 'message' in first ? first.message : args[2];
+    if (typeof message === 'string' && message.startsWith('[pet-live2d]')) console.log(message);
+  });
   win.on('move', () => {
     if (!win.isDestroyed()) {
       const [x, y] = win.getPosition();
@@ -586,11 +591,27 @@ function createWindow() {
 
   // 开发自检：PET_SHOT=1 时把窗口渲染结果存一张图，用来核对透明与排版
   if (process.env.PET_SHOT) {
+    // PET_STATE_TEST=success/error/sleep… 可在截图前切一次状态，验证参数驱动是否生效
+    if (process.env.PET_STATE_TEST) {
+      setTimeout(() => {
+        // 用轮询保持测试状态，否则会被 Hermes 状态推送覆盖回 idle
+        const script = `(function(){
+          if (!window.petLive2d) return 'missing';
+          var s = ${JSON.stringify(process.env.PET_STATE_TEST)};
+          window.petLive2d.setState(s);
+          clearInterval(window.__stateTestTimer);
+          window.__stateTestTimer = setInterval(function(){ window.petLive2d.setState(s); }, 250);
+          return 'ok';
+        })()`;
+        win.webContents.executeJavaScript(script).then((r) => console.log('state test:', r)).catch(() => {});
+      }, 4200);
+    }
+    const delay = Number(process.env.PET_SHOT_DELAY) || 2600;
     setTimeout(async () => {
       const img = await win.capturePage();
       fs.writeFileSync(path.join(__dirname, 'shot.png'), img.toPNG());
       console.log('shot saved:', path.join(__dirname, 'shot.png'));
-    }, 2600);
+    }, delay);
   }
   win.on('closed', () => { win = null; });
 }

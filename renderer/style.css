@@ -124,6 +124,22 @@ html, body {
   -webkit-user-drag: none;
 }
 
+/* Live2D 渲染层：就绪后接管立绘，静态图与 CSS 动画让位给模型自身形变 */
+#pet-live2d-host {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+#pet-live2d-host canvas { display: block; }
+body[data-live2d="on"] #pet-inner { display: none; }
+body[data-live2d="on"] #pet,
+body[data-live2d="on"] #pet.thinking,
+body[data-live2d="on"] #pet.working,
+body[data-live2d="on"] #pet.success,
+body[data-live2d="on"] #pet.error,
+body[data-live2d="on"] #pet.sleep,
+body[data-live2d="on"] #pet.drowsy { animation: none; }
+
 .pet-halo {
   mix-blend-mode: screen;
   opacity: .55;

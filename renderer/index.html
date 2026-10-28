@@ -23,6 +23,7 @@
       <div id="panel-agents"></div>
     </div>
     <div id="pet" aria-label="赫尔墨兹桌宠">
+      <div id="pet-live2d-host"></div>
       <div id="pet-inner">
         <img id="pet-body" class="pet-layer pet-body" src="../assets/states/v2/aligned/state/state-idle.png" alt="赫尔墨兹" draggable="false" />
         <img id="pet-blink" class="pet-layer pet-blink-layer" src="../assets/states/v2/aligned/state/state-idle-blink.png" alt="" draggable="false" />
@@ -41,6 +42,10 @@
       <div class="mi danger" data-act="quit">退出</div>
     </div>
   </div>
+  <script src="../node_modules/pixi.js/dist/browser/pixi.min.js"></script>
+  <script src="vendor/live2dcubismcore.min.js"></script>
+  <script src="../node_modules/pixi-live2d-display/dist/cubism4.min.js"></script>
+  <script src="pet-live2d.js"></script>
   <script src="pet.js"></script>
 </body>
 </html>
