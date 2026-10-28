@@ -27,7 +27,11 @@ const blinkLayer = document.getElementById('pet-blink');
 function paintFace(key) {
   const nextKey = String(key || 'idle');
   const src = window.pet.faceSources?.[nextKey];
-  if (!src || nextKey === currentFaceKey) return;
+  if (!src) {
+    console.warn(`[pet] 表情 key「${nextKey}」没有对应图源，检查 preload.js 的 faceFiles`);
+    return;
+  }
+  if (nextKey === currentFaceKey) return;
   currentFaceKey = nextKey;
   petFace.classList.add('swapping');
   clearTimeout(faceTimer);
@@ -247,13 +251,8 @@ function paintState(state) {
   stateDot.dataset.state = s.status || 'idle';
   petEl.dataset.state = s.status || 'idle';
   petEl.dataset.emotion = s.emotion || '平静';
-  const emotionFace = {
-    '平静': 'idle', '开心': 'happy', '得意': 'smug', '犯困': 'sleepy',
-    '有点烦': 'frown', '闹别扭': 'speechless', '兴奋': 'surprised', '委屈': 'shy'
-  };
-  const stateFace = {
-    success: 'happy', sleep: 'sleepy', thinking: 'thinking', working: 'thinking'
-  };
+  const emotionFace = window.pet.faceMaps?.emotion || {};
+  const stateFace = window.pet.faceMaps?.state || {};
   const face = s.status === 'error'
     ? ((s.failureSeverity === 'high' || s.mood <= 25) ? 'cry' : 'angry')
     : stateFace[s.status] || emotionFace[s.emotion] || 'idle';

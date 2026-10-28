@@ -4,6 +4,7 @@ const path = require('path');
 const petRegions = require('./pet-regions.json');
 const { hitRegion } = require('./pet-regions');
 const petActions = require('./pet-actions');
+const { FACE_FILES, EMOTION_FACE, STATE_FACE } = require('./pet-faces');
 const statesRoot = path.join(__dirname, 'assets', 'states');
 const legacyManifest = path.join(statesRoot, 'manifest.json');
 const v2Manifest = path.join(statesRoot, 'v2', 'index.json');
@@ -12,14 +13,10 @@ const readJson = (file) => {
 };
 const legacy = readJson(legacyManifest);
 const v2File = (group, name) => `../assets/states/v2/aligned/${group}/${name}.png`;
-const faceFiles = legacy.face || {
-  idle: v2File('face', 'face-calm'),
-  happy: v2File('face', 'face-laugh'),
-  sleepy: v2File('face', 'face-yawn'),
-  thinking: v2File('face', 'face-serious'),
-  angry: v2File('face', 'face-angry'),
-  cry: v2File('face', 'face-cry')
-};
+const defaultFaceFiles = Object.fromEntries(
+  Object.entries(FACE_FILES).map(([key, name]) => [key, v2File('face', name)])
+);
+const faceFiles = { ...defaultFaceFiles, ...(legacy.face || {}) };
 const faceSources = Object.fromEntries(Object.entries(faceFiles).map(([key, file]) => [
   key,
   String(file).startsWith('../') ? file : `../assets/states/${file}`
@@ -40,6 +37,7 @@ contextBridge.exposeInMainWorld('pet', {
   chooseAction: (group, previousId) => petActions.chooseAction(group, previousId),
   hitRegion: (x, y) => hitRegion(x, y, petRegions),
   faceSources,
+  faceMaps: { emotion: EMOTION_FACE, state: STATE_FACE },
   stateSources: hasV2 ? stateSources : {},
   setIgnore: (ignore) => ipcRenderer.send('set-ignore', ignore),
   openMenu: () => ipcRenderer.send('open-menu'),
