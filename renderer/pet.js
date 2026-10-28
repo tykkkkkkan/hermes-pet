@@ -90,12 +90,7 @@ let lastSX = 0;
 let lastSY = 0;
 
 function hitPetRegion(x, y) {
-  const regions = window.pet.regions || {};
-  for (const zone of ['head', 'face', 'feet', 'body']) {
-    const area = regions[zone];
-    if (area && x >= area.left && x <= area.right && y >= area.top && y <= area.bottom) return zone;
-  }
-  return 'body';
+  return window.pet.hitRegion?.(x, y) || 'body';
 }
 
 petHitArea.addEventListener('mousedown', (e) => {

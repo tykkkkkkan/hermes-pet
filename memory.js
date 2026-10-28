@@ -60,7 +60,7 @@ function makeExtractiveSummary(entries, day) {
   };
 }
 
-function updateMidterm(root, day) {
+function updateMidterm(root, day, entry, now = Date.now()) {
   const file = path.join(root, 'midterm.json');
   const stored = (() => {
     try {
@@ -68,10 +68,26 @@ function updateMidterm(root, day) {
       return Array.isArray(value) ? value : [];
     } catch { return []; }
   })();
+  const existing = stored.find((row) => row?.day === day);
   const next = stored.filter((row) => row?.day !== day);
-  next.push(makeExtractiveSummary(readDay(root, day), day));
+  let summary;
+  if (existing) {
+    const topics = Array.isArray(existing.userTopics) ? existing.userTopics : [];
+    const topic = entry.role === 'user' ? String(entry.content || '').replace(/\s+/g, ' ').trim().slice(0, 220) : '';
+    summary = {
+      ...existing,
+      messageCount: (Number(existing.messageCount) || 0) + 1,
+      userTopics: topic && !topics.includes(topic) ? [...topics, topic].slice(-MAX_SUMMARY_ITEMS) : topics.slice(-MAX_SUMMARY_ITEMS),
+      updatedAt: entry.at
+    };
+  } else {
+    // 仅首次为该日建立摘要时读取完整日志；后续每条消息都增量更新。
+    summary = makeExtractiveSummary(readDay(root, day), day);
+    summary.updatedAt = entry.at;
+  }
+  next.push(summary);
   next.sort((a, b) => a.day.localeCompare(b.day));
-  const cutoff = new Date();
+  const cutoff = new Date(now);
   cutoff.setDate(cutoff.getDate() - (MIDTERM_DAYS - 1));
   const cutoffDay = dayKey(cutoff);
   return writeJsonAtomic(file, next.filter((row) => row.day >= cutoffDay));
@@ -87,26 +103,27 @@ function record(root, sessionId, role, content, at = Date.now()) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const entries = readDay(root, day);
     if (entries.length >= MAX_DAILY_MESSAGES) return false;
-    fs.appendFileSync(file, `${JSON.stringify({
+    const entry = {
       sessionId: String(sessionId || ''),
       role,
       content: text.slice(0, 8000),
       at: Number(at) || Date.now()
-    })}\n`, 'utf8');
-    updateMidterm(root, day);
+    };
+    fs.appendFileSync(file, `${JSON.stringify(entry)}\n`, 'utf8');
+    updateMidterm(root, day, entry);
     return true;
   } catch {
     return false;
   }
 }
 
-function snapshot(root) {
+function snapshot(root, now = Date.now()) {
   let midterm = [];
   try {
     const stored = JSON.parse(fs.readFileSync(path.join(root, 'midterm.json'), 'utf8'));
     if (Array.isArray(stored)) midterm = stored;
   } catch {}
-  const cutoff = new Date();
+  const cutoff = new Date(now);
   cutoff.setDate(cutoff.getDate() - (MIDTERM_DAYS - 1));
   const cutoffDay = dayKey(cutoff);
   const recent = midterm.filter((row) => row && row.day >= cutoffDay);
