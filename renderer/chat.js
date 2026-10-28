@@ -4,6 +4,10 @@ let droppedFiles = [];
 let recognition = null;
 let listening = false;
 
+async function addressed(text) {
+  return window.pet.formatUtterance(text).catch(() => String(text || ''));
+}
+
 function esc(value) {
   return String(value == null ? '' : value).replace(/[&<>"]/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'
@@ -51,7 +55,7 @@ async function send() {
     if (result.ok) addMessage('assistant', result.answer, Date.now());
     else addMessage('assistant', result.error || '这条消息没有发出去。', Date.now());
   } catch (error) {
-    addMessage('assistant', error.message || '连接失败。', Date.now());
+    addMessage('assistant', await addressed(error.message || '连接失败。'), Date.now());
   } finally {
     sending = false;
     $('send').disabled = false;
@@ -146,8 +150,8 @@ function setupVoice() {
   const button = $('voice-btn');
   if (!Engine) {
     button.title = '当前 Electron 没有可用的中文语音识别';
-    button.addEventListener('click', () => {
-      $('task-msg').textContent = '当前环境没有语音识别入口，先用文字输入';
+    button.addEventListener('click', async () => {
+      $('task-msg').textContent = await addressed('当前环境没有语音识别入口，先用文字输入');
     });
     return;
   }
@@ -186,7 +190,7 @@ function setupVoice() {
 async function init() {
   const history = await window.pet.getSessionHistory();
   if (history.entries && history.entries.length) history.entries.forEach((m) => addMessage(m.role, m.content, m.at));
-  else addMessage('assistant', 'Hermes 的 Bot Chat 目前还没有可显示的记录', Date.now());
+  else addMessage('assistant', await addressed('Hermes 的 Bot Chat 目前还没有可显示的记录'), Date.now());
   await loadSettings();
   paintState(await window.pet.getState());
   $('input').focus();
@@ -249,4 +253,4 @@ document.addEventListener('drop', (event) => {
   const files = Array.from(event.dataTransfer?.files || []);
   if (files.length) openTaskModal(files);
 });
-init().catch((error) => addMessage('assistant', error.message || '初始化失败。', Date.now()));
+init().catch(async (error) => addMessage('assistant', await addressed(error.message || '初始化失败。'), Date.now()));

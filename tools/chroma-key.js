@@ -44,13 +44,13 @@ function smoothstep(a, b, x) {
  * @param {object} im decode 结果
  * @param {object} opt
  *   bgTol      与背景色的 RGB 欧氏距离，小于此值视为背景候选
- *   softLo/softHi  洋红强度过渡带（alpha 从 1 降到 0 的区间）
+ *   softLo/softHi  洋红强度过渡带（alpha 从 1 降到 0 的区间）。不传则按实测底色自动推导
  *   despill    去色溢强度 0~1
  *   despillBand  只在该 alpha 区间内做 despill
  */
 function keyOut(im, opt = {}) {
   const o = Object.assign(
-    { bgTol: 150, softLo: 45, softHi: 165, despill: 0.72, despillBand: [0.02, 0.98] },
+    { bgTol: 150, despill: 0.72, despillBand: [0.02, 0.98] },
     opt
   );
   const { width: w, height: h } = im;
@@ -69,15 +69,31 @@ function keyOut(im, opt = {}) {
     arr.sort((a, b) => a - b);
     return arr[(arr.length / 2) | 0];
   });
-  const bgIsMagenta = bg[0] > 130 && bg[2] > 130 && bg[1] < 140;
+
+  // 洋红强度：纯 #FF00FF 约 255，白色约 0
+  const bgMag = Math.min(bg[0], bg[2]) - bg[1];
+  const bgIsMagenta = bgMag > 55 && bg[0] > 150;
+
+  // 关键：过渡带必须跟着实际底色走。
+  // 豆包有时把「洋红」画成偏粉的 #FD4A97（bgMag≈80），
+  // 用固定 45/165 会把人物边缘判成半透明，抠完一圈发虚。
+  const softLo = o.softLo != null ? o.softLo : Math.max(12, bgMag * 0.25);
+  const softHi = o.softHi != null ? o.softHi : Math.max(softLo + 25, bgMag * 0.88);
+
 
   // ---- 2. 洪泛：从画布边缘向内，标记与外界连通的背景 ----
+  // 两个条件必须同时满足：
+  //   a) 颜色接近实测底色
+  //   b) 洋红强度不低（mag >= softLo）
+  // 只靠 (a) 会出事：C 类底色是 (253,124,216)，到白色的欧氏距离只有 136，
+  // 落在 bgTol=150 内，白色手写标题会被当成背景整块吃掉（C7「摸鱼」就是这么没的）。
   const isBg = new Uint8Array(w * h);
   const stack = [];
   const near = (i) => {
     const p = i * 4;
     const dr = src[p] - bg[0], dg = src[p + 1] - bg[1], db = src[p + 2] - bg[2];
-    return dr * dr + dg * dg + db * db < o.bgTol * o.bgTol;
+    if (dr * dr + dg * dg + db * db >= o.bgTol * o.bgTol) return false;
+    return Math.min(src[p], src[p + 2]) - src[p + 1] >= softLo;
   };
   for (let x = 0; x < w; x++) { stack.push(x); stack.push((h - 1) * w + x); }
   for (let y = 0; y < h; y++) { stack.push(y * w); stack.push(y * w + w - 1); }
@@ -102,7 +118,7 @@ function keyOut(im, opt = {}) {
     let a;
     if (bgIsMagenta) {
       const magScore = Math.min(r, b) - g;             // 洋红≈198，白≈0
-      a = 1 - smoothstep(o.softLo, o.softHi, magScore);
+      a = 1 - smoothstep(softLo, softHi, magScore);
     } else {
       a = isBg[i] ? 0 : 1;
     }
@@ -140,6 +156,9 @@ function keyOut(im, opt = {}) {
     stats: {
       bg: bg.join(','),
       bgIsMagenta,
+      bgMag,
+      softLo: Math.round(softLo),
+      softHi: Math.round(softHi),
       bgPx,
       softPx,
       spillPx,
@@ -175,7 +194,7 @@ for (const f of files) {
   const pct = (n) => ((n / stats.total) * 100).toFixed(2) + '%';
   console.log(
     `${name}  [${im.kind} ${im.width}x${im.height}]  bg=(${stats.bg})` +
-      `  透明 ${pct(stats.bgPx)}  软边 ${pct(stats.softPx)}  去色溢 ${pct(stats.spillPx)}` +
+      `  mag=${stats.bgMag} 带=[${stats.softLo},${stats.softHi}]  透明 ${pct(stats.bgPx)}  软边 ${pct(stats.softPx)}  去色溢 ${pct(stats.spillPx)}` +
       `  -> ${path.basename(dest)}`
   );
 }

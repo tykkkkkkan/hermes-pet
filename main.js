@@ -106,8 +106,18 @@ function announce(text, options = {}) {
   text = prepareUtterance(text);
   if (win && !win.isDestroyed()) win.webContents.send('announce', text, options);
   if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.send('announce', text, options);
-  if (options.notify && Notification.isSupported()) {
-    new Notification({ title: '赫尔墨兹', body: text }).show();
+  if (options.notify) showSystemNotification(text);
+}
+
+function showSystemNotification(text) {
+  try {
+    const supported = Notification.isSupported();
+    console.log(`[hermes-pet] notification supported=${supported} body=${text}`);
+    if (supported) new Notification({ title: '赫尔墨兹', body: text }).show();
+    return supported;
+  } catch (error) {
+    console.log(`[hermes-pet] notification error=${error?.message || error}`);
+    return false;
   }
 }
 
@@ -413,7 +423,11 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // preload 里 require 了 pet-regions.json 和 states/manifest.json；
+      // Electron 20 起渲染进程默认沙箱化，沙箱内的 preload 只能 require electron，
+      // 本地 json 会直接 module not found，window.pet 整个消失。
+      sandbox: false
     }
   });
 
@@ -451,7 +465,11 @@ function createChatWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // preload 里 require 了 pet-regions.json 和 states/manifest.json；
+      // Electron 20 起渲染进程默认沙箱化，沙箱内的 preload 只能 require electron，
+      // 本地 json 会直接 module not found，window.pet 整个消失。
+      sandbox: false
     }
   });
   chatWin.loadFile(path.join(__dirname, 'renderer', 'chat.html'));
@@ -535,6 +553,7 @@ ipcMain.on('hide-chat', () => chatWin && chatWin.hide());
 ipcMain.on('close-chat', () => chatWin && chatWin.close());
 
 ipcMain.handle('pet-state-get', () => petState);
+ipcMain.handle('utterance-format', (_e, text) => prepareUtterance(text));
 ipcMain.handle('hermes-snapshot-get', async () => {
   try { return await hermesBridge.snapshot(); } catch { return { online: false }; }
 });
@@ -543,8 +562,8 @@ ipcMain.handle('session-history', async () => {
 });
 ipcMain.handle('session-chat', async (_e, text) => {
   const message = String(text || '').trim().slice(0, 4000);
-  if (!message) return { ok: false, error: '消息不能为空' };
-  if (chatBusy) return { ok: false, error: '我还在处理上一条消息' };
+  if (!message) return { ok: false, error: prepareUtterance('消息不能为空') };
+  if (chatBusy) return { ok: false, error: prepareUtterance('我还在处理上一条消息') };
   trackUserEmotion(message);
   chatBusy = true;
   setPetState('thinking', '思考中');
@@ -607,8 +626,8 @@ ipcMain.handle('settings-save', (_e, input) => {
 ipcMain.handle('history-get', () => loadHistory());
 ipcMain.handle('chat-send', async (_e, text) => {
   const message = String(text || '').trim().slice(0, 4000);
-  if (!message) return { ok: false, error: '消息不能为空' };
-  if (chatBusy) return { ok: false, error: '我还在处理上一条消息' };
+  if (!message) return { ok: false, error: prepareUtterance('消息不能为空') };
+  if (chatBusy) return { ok: false, error: prepareUtterance('我还在处理上一条消息') };
   trackUserEmotion(message);
   chatBusy = true;
   appendHistory('user', message);

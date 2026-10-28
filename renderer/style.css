@@ -135,8 +135,6 @@ html, body {
   background-size: 320% 100%;
   background-position: 140% 0;
   mix-blend-mode: screen;
-  -webkit-mask: url("../assets/states/body/idle.png") center / 100% 100% no-repeat;
-          mask: url("../assets/states/body/idle.png") center / 100% 100% no-repeat;
   animation: glossSweep 7.5s cubic-bezier(.4,0,.2,1) infinite;
 }
 .pet-contact { animation: contactPulse 4.2s ease-in-out infinite; }

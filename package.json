@@ -4,7 +4,8 @@
   "description": "Hermes 桌宠 —— 透明置顶的二次元执事小人",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "smoke": "node test/e2e/pet-smoke.mjs"
   },
   "author": "汤伊轲",
   "license": "MIT",

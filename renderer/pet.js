@@ -1,4 +1,5 @@
 const petEl = document.getElementById('pet');
+const petBody = document.getElementById('pet-body');
 const petFace = document.getElementById('pet-face');
 const petHitArea = document.getElementById('pet-hit-area');
 const bubble = document.getElementById('bubble');
@@ -41,6 +42,11 @@ function say(text, ms = 4200) {
       updateIgnore(lastX, lastY);
     }, 200);
   }, ms);
+}
+
+async function sayAddressed(text, ms = 4200) {
+  const addressed = await window.pet.formatUtterance(text).catch(() => text);
+  say(addressed, ms);
 }
 
 function bubbleVisible() {
@@ -146,23 +152,23 @@ petHitArea.addEventListener('drop', async (event) => {
   event.preventDefault();
   petEl.classList.remove('drop-target');
   const files = Array.from(event.dataTransfer?.files || []).filter((file) => file.path);
-  if (!files.length) return say('没拿到文件路径，无法派发。打开聊天窗也能创建任务。', 5000);
+  if (!files.length) return sayAddressed('没拿到文件路径，无法派发。打开聊天窗也能创建任务。', 5000);
   const title = files.length === 1 ? files[0].name : `处理 ${files.length} 个文件`;
-  say(`收到「${title}」，正在交给 Hermes…`, 8000);
+  await sayAddressed(`收到「${title}」，正在交给 Hermes…`, 8000);
   const created = await window.pet.createTask({
     title,
     body: `请处理拖入的文件：${files.map((file) => file.name).join('、')}`,
     triage: true
   });
-  if (!created?.ok) return say(`任务没建成：${created?.error || 'Hermes 暂不可用'}`, 6500);
+  if (!created?.ok) return say(created?.error || '任务没建成：Hermes 暂不可用', 6500);
   const task = created.task?.task || created.task || {};
   const taskId = task.id;
-  if (taskId == null) return say('任务已创建，但 Hermes 没返回任务编号，附件未上传。', 6500);
+  if (taskId == null) return sayAddressed('任务已创建，但 Hermes 没返回任务编号，附件未上传。', 6500);
   for (const file of files) {
     const uploaded = await window.pet.uploadTaskFile(taskId, file.path);
-    if (!uploaded?.ok) return say(`任务已建成，但「${file.name}」上传失败：${uploaded?.error || '未知错误'}`, 6500);
+    if (!uploaded?.ok) return say(uploaded?.error || `任务已建成，但「${file.name}」上传失败：未知错误`, 6500);
   }
-  say(`「${title}」已派发，${files.length} 个附件已交给 Hermes。`, 5200);
+  sayAddressed(`「${title}」已派发，${files.length} 个附件已交给 Hermes。`, 5200);
 });
 
 /* ---------------- 右键菜单 ---------------- */
@@ -183,6 +189,9 @@ function paintState(state) {
     ? s.face
     : faceByState[s.status] || 'idle';
   petEl.dataset.face = s.status === 'error' && (s.failureSeverity === 'high' || s.mood <= 25) ? 'cry' : face;
+  const bodyState = ['idle', 'working', 'thinking', 'success', 'sleep', 'error'].includes(s.status)
+    ? s.status : 'idle';
+  petBody.src = window.pet.stateSources?.[bodyState] || window.pet.stateSources?.idle || petBody.src;
   petFace.src = window.pet.faceSources?.[petEl.dataset.face] || window.pet.faceSources?.idle || petFace.src;
   petEl.classList.toggle('thinking', s.status === 'thinking');
   petEl.classList.toggle('working', s.status === 'working');
@@ -237,7 +246,7 @@ menu.addEventListener('click', (e) => {
       window.pet.openChat();
       break;
     case 'talk':
-      say(LINES[Math.floor(Math.random() * LINES.length)]);
+      sayAddressed(LINES[Math.floor(Math.random() * LINES.length)]);
       break;
     case 'snap':
       window.pet.snapCorner();
@@ -266,7 +275,7 @@ window.addEventListener('mousedown', (e) => {
 
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeMenu();
-  if (e.key === 'F1') say(LINES[0]);
+  if (e.key === 'F1') sayAddressed(LINES[0]);
 });
 
 /* ---------------- 待机小动作 ---------------- */
@@ -292,5 +301,5 @@ petHitArea.addEventListener('mouseenter', () => {
 });
 
 /* ---------------- 托盘消息 ---------------- */
-window.pet.onToast((text) => say(text, 1800));
+window.pet.onToast((text) => sayAddressed(text, 1800));
 

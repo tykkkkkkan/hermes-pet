@@ -1,0 +1,165 @@
+{
+  "generatedAt": "2026-10-28T02:33:59.812Z",
+  "groups": {
+    "state": [
+      {
+        "file": "state-idle.png",
+        "note": "常驻：抱书 + 托平板，睁眼微笑"
+      },
+      {
+        "file": "state-idle-blink.png",
+        "note": "眨眼帧：同姿势闭眼"
+      },
+      {
+        "file": "state-sleepy.png",
+        "note": "困：书贴脸打哈欠"
+      },
+      {
+        "file": "state-annoyed.png",
+        "note": "不满：双手叉腰瞪视"
+      },
+      {
+        "file": "state-error.png",
+        "note": "失败：双手垂、含泪"
+      },
+      {
+        "file": "state-success.png",
+        "note": "成功：双手高举、单脚跳"
+      },
+      {
+        "file": "walk-contact.png",
+        "note": "走路迈步帧"
+      },
+      {
+        "file": "pose-wave.png",
+        "note": "挥手"
+      },
+      {
+        "file": "pose-point.png",
+        "note": "指向前方"
+      },
+      {
+        "file": "pose-side.png",
+        "note": "正侧面朝右"
+      },
+      {
+        "file": "pose-back.png",
+        "note": "背面"
+      },
+      {
+        "file": "pose-trust.png",
+        "note": "举书前递（交给我吧）"
+      }
+    ],
+    "state2": [
+      {
+        "file": "state2-idle.png",
+        "note": "常驻（新画风）：抱书站姿、闭嘴微笑"
+      },
+      {
+        "file": "state2-thinking.png",
+        "note": "思考：低头看书"
+      },
+      {
+        "file": "state2-working.png",
+        "note": "干活：横屏操作"
+      },
+      {
+        "file": "state2-waiting.png",
+        "note": "等你：举书询问"
+      }
+    ],
+    "face": [
+      {
+        "file": "face-calm.png",
+        "note": "平常：睁眼平视、抿嘴笑"
+      },
+      {
+        "file": "face-surprised.png",
+        "note": "惊讶：睁大眼、看平板"
+      },
+      {
+        "file": "face-serious.png",
+        "note": "严肃：眼半垂、嘴平"
+      },
+      {
+        "file": "face-laugh.png",
+        "note": "大笑：闭眼张嘴"
+      },
+      {
+        "file": "face-yawn.png",
+        "note": "打哈欠 + 汗滴"
+      },
+      {
+        "file": "face-frown.png",
+        "note": "皱眉、心事重"
+      },
+      {
+        "file": "face-angry.png",
+        "note": "怒眉、嘴角下垂"
+      },
+      {
+        "file": "face-speechless.png",
+        "note": "无语：半月眼"
+      },
+      {
+        "file": "face-smug.png",
+        "note": "得意：挑眉斜视"
+      },
+      {
+        "file": "face-cry.png",
+        "note": "委屈：含泪、泪痕"
+      },
+      {
+        "file": "face-shock.png",
+        "note": "震惊：O 型嘴"
+      },
+      {
+        "file": "face-shy.png",
+        "note": "害羞：脸红、抿嘴"
+      }
+    ],
+    "shot": [
+      {
+        "file": "shot-done.png",
+        "note": "搞定（手写标题）"
+      },
+      {
+        "file": "shot-rest.png",
+        "note": "歇一下"
+      },
+      {
+        "file": "shot-work.png",
+        "note": "赶工"
+      },
+      {
+        "file": "shot-trust.png",
+        "note": "交给我吧"
+      },
+      {
+        "file": "shot-dispatch.png",
+        "note": "我来调度"
+      },
+      {
+        "file": "shot-memory.png",
+        "note": "记忆存好了"
+      },
+      {
+        "file": "shot-fish.png",
+        "note": "摸鱼"
+      },
+      {
+        "file": "shot-hungry.png",
+        "note": "饿了"
+      },
+      {
+        "file": "shot-overtime.png",
+        "note": "加班"
+      },
+      {
+        "file": "shot-bye.png",
+        "note": "拜拜"
+      }
+    ]
+  }
+}

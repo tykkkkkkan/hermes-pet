@@ -80,19 +80,62 @@ function sample(im, sx, sy, out, o) {
   out[o + 3] = a * 255;
 }
 
-function normalize(im, file) {
+/**
+ * 帽子顶：角色的固定最高点，比 bbox 顶更可靠
+ *
+ * 为什么需要它：举手/跳跃的图，bbox 顶部是手套或平板，不是头顶。
+ * 按 bbox 高度缩放，手臂举得越高的图被缩得越小——success 和 wave
+ * 会比 idle 矮 3~4%，切换状态时人物会"忽大忽小"。
+ *
+ * 判据：深紫色 + 单行连续宽度 >= 100px + 连续 3 行
+ *   - 只用颜色会把"举起的平板"误判成帽子（success 里平板在帽子上方），
+ *     所以加了连续宽度门槛：帽檐宽 200~300px，平板只有 90~120px
+ *   - 只用单行会把噪点算进来，所以要求连续 3 行
+ */
+function hatTop(im, bb) {
+  const { width: w, data: d } = im;
+  const isHat = (p) => {
+    if (d[p + 3] <= 160) return false;
+    const r = d[p], g = d[p + 1], b = d[p + 2];
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    return lum < 105 && b > g + 12 && r < 140;
+  };
+  let run = 0;
+  for (let y = bb.y0; y <= bb.y1; y++) {
+    let maxSeg = 0, cur = 0;
+    for (let x = bb.x0; x <= bb.x1; x++) {
+      if (isHat((y * w + x) * 4)) {
+        cur++;
+        if (cur > maxSeg) maxSeg = cur;
+      } else cur = 0;
+    }
+    if (maxSeg >= 100) {
+      run++;
+      if (run >= 3) return y - 2;
+    } else run = 0;
+  }
+  return null;
+}
+
+function normalize(im, file, anchor) {
   const bb = bbox(im);
   if (!bb) throw new Error('整张图透明，没有内容: ' + file);
 
-  const targetH = SIZE * CHAR_H;
-  const scale = targetH / bb.h;
+  // 顶部锚点：
+  //   hat   —— 用贝雷帽顶（深紫色横向连续段），适合"手举过头顶"的姿势，
+  //            否则包围盒顶会顶到手套，人物被整体缩小
+  //   bbox  —— 直接用包围盒顶，适合同一批出图、位置与翅膀高度一致的组
+  //            （这批图上帽顶的深紫段太窄，hat 会误判到帽檐，得差 5% 身高）
+  const hat = anchor === 'bbox' ? null : hatTop(im, bb);
+  const topY = hat != null && hat > bb.y0 ? hat : bb.y0;
+  const bodyH = bb.y1 - topY + 1;          // 帽子顶 → 脚底，这才是"身高"
+  const scale = (SIZE * CHAR_H) / bodyH;
 
-  // 缩放后，内容应该占据的左上角
-  const destH = bb.h * scale;
+  const destH = bb.h * scale;              // 含举起的手在内，bbox 缩放后的高度
   const destW = bb.w * scale;
-  const destFootY = SIZE * FOOT_Y;              // 脚底落点
-  const destTop = destFootY - destH;            // 内容顶部落点
-  const destLeft = SIZE / 2 - destW / 2;        // 水平居中
+  const destFootY = SIZE * FOOT_Y;         // 脚底落点
+  const destTop = destFootY - destH;       // bbox 顶部落点（可能高于帽子顶）
+  const destLeft = SIZE / 2 - destW / 2;   // 水平居中
 
   const out = new PNG({ width: SIZE, height: SIZE });
   out.data.fill(0);
@@ -118,6 +161,7 @@ function normalize(im, file) {
     info: {
       srcSize: im.width + 'x' + im.height,
       srcCharH: ((bb.h / im.height) * 100).toFixed(1) + '%',
+      hatTop: hat != null ? ((hat / im.height) * 100).toFixed(1) + '%' : '-',
       srcFootY: ((bb.y1 / im.height) * 100).toFixed(1) + '%',
       scale: scale.toFixed(3),
       outCharH: ((destH / SIZE) * 100).toFixed(1) + '%',
@@ -129,8 +173,9 @@ function normalize(im, file) {
 
 // ---------------- 主流程 ----------------
 const args = process.argv.slice(2);
+const ANCHOR = args.includes('--anchor=bbox') ? 'bbox' : 'hat';
 if (!args[0]) {
-  console.error('用法: node tools/normalize-frames.js <输入目录> [输出目录]');
+  console.error('用法: node tools/normalize-frames.js <输入目录> [输出目录] [--anchor=bbox]');
   process.exit(1);
 }
 const inDir = args[0];
@@ -146,7 +191,7 @@ console.log('文件'.padEnd(18), '源尺寸'.padEnd(11), '源身高', '源脚底
 for (const f of files) {
   const name = path.basename(f).replace(/\.(png|jpe?g)$/i, '');
   const im = decode(f);
-  const { png, info } = normalize(im, f);
+  const { png, info } = normalize(im, f, ANCHOR);
   fs.writeFileSync(path.join(outDir, name + '.png'), PNG.sync.write(png, { colorType: 6 }));
   console.log(
     name.padEnd(16),
@@ -154,7 +199,7 @@ for (const f of files) {
     info.srcCharH.padStart(6),
     info.srcFootY.padStart(6),
     info.scale.padStart(6),
-    `  身高 ${info.outCharH} 脚底 ${info.outFootY} 中轴 ${info.outMidX}`
+    `  身高 ${info.outCharH} 脚底 ${info.outFootY} 锚点 ${ANCHOR}:${info.hatTop}`
   );
 }
 console.log('\n输出目录: ' + outDir);
