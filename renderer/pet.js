@@ -1,5 +1,6 @@
 const petEl = document.getElementById('pet');
 const petBody = document.getElementById('pet-body');
+const petFace = document.getElementById('pet-face');
 const stateEl = document.getElementById('pet-state');
 const gestureEl = document.getElementById('pet-gesture');
 const petHitArea = document.getElementById('pet-hit-area');
@@ -19,7 +20,22 @@ const panelTask = document.getElementById('panel-task');
 const panelAgents = document.getElementById('panel-agents');
 
 let currentSrc = petBody.getAttribute('src');
+let currentFaceKey = 'idle';
+let faceTimer = null;
 const blinkLayer = document.getElementById('pet-blink');
+
+function paintFace(key) {
+  const nextKey = String(key || 'idle');
+  const src = window.pet.faceSources?.[nextKey];
+  if (!src || nextKey === currentFaceKey) return;
+  currentFaceKey = nextKey;
+  petFace.classList.add('swapping');
+  clearTimeout(faceTimer);
+  faceTimer = setTimeout(() => {
+    petFace.src = src;
+    requestAnimationFrame(() => petFace.classList.remove('swapping'));
+  }, 160);
+}
 
 /* ---------------- 眨眼（叠加帧交叉淡化，闭快睁慢，偶发双连眨） ---------------- */
 function blinkOnce() {
@@ -231,14 +247,18 @@ function paintState(state) {
   stateDot.dataset.state = s.status || 'idle';
   petEl.dataset.state = s.status || 'idle';
   petEl.dataset.emotion = s.emotion || '平静';
-  const faceByState = {
-    idle: 'idle', success: 'happy', sleep: 'sleepy',
-    thinking: 'thinking', working: 'thinking', error: 'angry'
+  const emotionFace = {
+    '平静': 'idle', '开心': 'happy', '得意': 'smug', '犯困': 'sleepy',
+    '有点烦': 'frown', '闹别扭': 'speechless', '兴奋': 'surprised', '委屈': 'shy'
   };
-  const face = ['idle', 'happy', 'sleepy', 'thinking', 'angry', 'cry'].includes(s.face)
-    ? s.face
-    : faceByState[s.status] || 'idle';
-  petEl.dataset.face = s.status === 'error' && (s.failureSeverity === 'high' || s.mood <= 25) ? 'cry' : face;
+  const stateFace = {
+    success: 'happy', sleep: 'sleepy', thinking: 'thinking', working: 'thinking'
+  };
+  const face = s.status === 'error'
+    ? ((s.failureSeverity === 'high' || s.mood <= 25) ? 'cry' : 'angry')
+    : stateFace[s.status] || emotionFace[s.emotion] || 'idle';
+  petEl.dataset.face = face;
+  paintFace(face);
   const bodyState = ['idle', 'working', 'thinking', 'success', 'sleep', 'error'].includes(s.status)
     ? s.status : 'idle';
   const nextSrc = window.pet.stateSources?.[bodyState] || window.pet.stateSources?.idle;

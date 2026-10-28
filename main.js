@@ -1310,7 +1310,7 @@ if (!gotLock) {
     createWindow();
     createTray();
     startBridgeServer();
-    startHermesPolling();
+    if (process.env.PET_DISABLE_POLL !== '1') startHermesPolling();
     globalShortcut.register('CommandOrControl+Shift+H', showChat);
     if (process.env.PET_LIVE2D_TEST === '1') createLive2dTestWindow();
   });

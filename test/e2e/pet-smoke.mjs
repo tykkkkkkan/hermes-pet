@@ -13,7 +13,6 @@ const KEEP = process.argv.includes('--keep');
 const ISOLATED = process.argv.includes('--isolated');
 const TMP_PROFILE = path.join(ROOT, '.tmp', 'smoke-profile');
 const ART = path.join(ROOT, 'test/e2e/artifacts');
-const DOC_ART = path.join(ROOT, 'docs');
 
 const results = [];
 function check(name, ok, detail = '') {
@@ -88,6 +87,7 @@ async function main() {
     env: {
       ...process.env,
       ELECTRON_ENABLE_LOGGING: '1',
+      PET_DISABLE_POLL: '1',
       ...(ISOLATED ? { PET_BRIDGE_FILE: path.join(ROOT, '.tmp', 'smoke-bridge.json') } : {}),
     },
   });
@@ -139,17 +139,30 @@ async function main() {
     const layersInDom = await evaluate(cdp, `(() => {
       const pet = document.getElementById('pet');
       const blink = document.getElementById('pet-blink');
+      const face = document.getElementById('pet-face');
       return {
         images: pet ? pet.querySelectorAll('img.pet-layer').length : -1,
         hasBlink: !!blink && blink.classList.contains('pet-blink-layer'),
+        hasFace: !!face && face.classList.contains('pet-face'),
+        facePointerEvents: face ? getComputedStyle(face).pointerEvents : null,
         blinkOpacity: blink ? getComputedStyle(blink).opacity : null,
-        ghostFace: !!document.getElementById('pet-face'),
         gloss: !!document.querySelector('.pet-gloss')
       };
     })()`);
-    check('仅一层立绘 + 一层眨眼帧，静止时无重影', layersInDom?.images === 2 && layersInDom?.hasBlink
-      && Number(layersInDom?.blinkOpacity) === 0 && !layersInDom?.ghostFace && !layersInDom?.gloss,
-      `立绘层 ${layersInDom?.images} 张（含眨眼帧），眨眼帧静止透明度 ${layersInDom?.blinkOpacity}`);
+    check('立绘、表情、眨眼三层顺序正确', layersInDom?.images === 3 && layersInDom?.hasFace && layersInDom?.hasBlink
+      && layersInDom?.facePointerEvents === 'none' && Number(layersInDom?.blinkOpacity) === 0 && !layersInDom?.gloss,
+      `立绘层 ${layersInDom?.images} 张，表情穿透 ${layersInDom?.facePointerEvents}，眨眼透明度 ${layersInDom?.blinkOpacity}`);
+
+    const faces = await evaluate(cdp, `(() => {
+      const sources = { ...window.pet.faceSources };
+      return Promise.all(Object.entries(sources).map(([key, src]) => new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => resolve({ key, ok: img.naturalWidth > 0 });
+        img.onerror = () => resolve({ key, ok: false });
+        img.src = src;
+      })));
+    })()`);
+    check('六态表情贴片全部加载', faces?.length >= 6 && faces.every((face) => face.ok), JSON.stringify(faces));
 
     // ---- 4. 立绘分层图片没有 404 ----
     const layers = await evaluate(cdp, `(() => {
@@ -186,6 +199,20 @@ async function main() {
     check('getState 能从主进程拿到状态', state?.ok, state?.ok ? state.keys.join(',') : state?.err);
 
     // ---- 7. 状态切换后表情层真的换图 ----
+    const statusFaces = await evaluate(cdp, `(async () => {
+      const expected = { working: 'face-serious', thinking: 'face-serious', success: 'face-laugh', sleep: 'face-yawn', error: 'face-angry' };
+      const out = {};
+      for (const [status, file] of Object.entries(expected)) {
+        window.pet.setStatus(status);
+        await new Promise(r => setTimeout(r, 340));
+        const face = document.getElementById('pet-face');
+        out[status] = { state: document.getElementById('pet').dataset.state || '', face: document.getElementById('pet').dataset.face || '', src: face.getAttribute('src') || '', ok: (face.getAttribute('src') || '').includes(file), opacity: getComputedStyle(face).opacity };
+      }
+      window.pet.setStatus('idle');
+      return out;
+    })()`);
+    check('六态状态表情按优先级切换', Object.values(statusFaces || {}).every((item) => item.ok), JSON.stringify(statusFaces));
+
     const switched = await evaluate(cdp, `(async () => {
       const before = document.getElementById('pet-body').getAttribute('src');
       window.pet.interact('head');
@@ -215,11 +242,11 @@ async function main() {
 
     const headAction = await triggerZone('head');
     check('点头动作单次播放且不抢呼吸', headAction?.immediate?.active && headAction.immediate?.action && headAction.iteration === '1', JSON.stringify(headAction));
-    check('点头截图', await capture(cdp, path.join(DOC_ART, 'pet-action-head.png')), 'docs/pet-action-head.png');
+    check('点头截图', await capture(cdp, path.join(ART, 'pet-action-head.png')), 'test/e2e/artifacts/pet-action-head.png');
 
     const feetAction = await triggerZone('feet');
     check('点脚动作单次播放', feetAction?.immediate?.active && feetAction?.immediate?.action && feetAction.iteration === '1', JSON.stringify(feetAction));
-    check('点脚截图', await capture(cdp, path.join(DOC_ART, 'pet-action-feet.png')), 'docs/pet-action-feet.png');
+    check('点脚截图', await capture(cdp, path.join(ART, 'pet-action-feet.png')), 'test/e2e/artifacts/pet-action-feet.png');
 
     await evaluate(cdp, `window.pet.setStatus('working'); true`);
     await sleep(60);
@@ -235,7 +262,7 @@ async function main() {
     await cdp.send('Emulation.setEmulatedMedia', { features: [] });
     await evaluate(cdp, `window.pet.setStatus('idle'); true`);
 
-    check('待机截图', await capture(cdp, path.join(DOC_ART, 'pet-action-idle.png')), 'docs/pet-action-idle.png');
+    check('待机截图', await capture(cdp, path.join(ART, 'pet-action-idle.png')), 'test/e2e/artifacts/pet-action-idle.png');
 
     // ---- 8. 截图留证 ----
     const file = path.join(ART, `pet-${new Date().toISOString().replace(/[:.]/g, '-')}.png`);

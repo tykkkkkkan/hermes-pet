@@ -162,6 +162,13 @@ body[data-live2d="on"] #pet-gesture { animation: none; }
   transform-origin: 50% 96%;
   transition: filter .7s ease;
 }
+/* 表情贴片与整图逐像素对齐，不能接收鼠标；切换时短暂淡出避免硬切和白闪。 */
+.pet-face {
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity .16s ease-out;
+}
+.pet-face.swapping { opacity: 0; }
 /* 眨眼帧：平时完全透明，闭眼时快速淡入、睁眼时稍慢淡出，闭眼快睁眼慢更像真人 */
 .pet-blink-layer {
   opacity: 0;
@@ -218,12 +225,12 @@ body[data-live2d="on"] #pet-gesture { animation: none; }
 #pet-state.error { animation: error 0.9s ease-in-out infinite; filter: drop-shadow(0 8px 12px rgba(180, 64, 78, 0.34)) saturate(0.8); }
 #pet-state.sleep { animation: sleep 4.5s ease-in-out infinite; filter: grayscale(0.25) brightness(0.88) drop-shadow(0 8px 12px rgba(0, 0, 0, 0.2)); }
 #pet[data-emotion="开心"] .pet-body,
-#pet[data-emotion="得意"] .pet-body { filter: drop-shadow(0 4px 9px rgba(255, 178, 89, .34)) saturate(1.12); }
+#pet[data-emotion="得意"] .pet-body { filter: drop-shadow(0 4px 9px rgba(255, 178, 89, .34)); }
 #pet[data-emotion="犯困"] .pet-body,
-#pet.drowsy .pet-body { filter: brightness(.86) saturate(.78) drop-shadow(0 4px 8px rgba(10, 16, 32, .2)); }
+#pet[data-state="sleep"] .pet-body { filter: drop-shadow(0 4px 8px rgba(10, 16, 32, .2)); }
 #pet[data-emotion="有点烦"] .pet-body,
-#pet[data-emotion="闹别扭"] .pet-body { filter: saturate(.84) contrast(1.04) drop-shadow(0 4px 8px rgba(10, 16, 32, .22)); }
-#pet[data-emotion="兴奋"] .pet-body { filter: saturate(1.2) brightness(1.04) drop-shadow(0 4px 10px rgba(121, 104, 222, .36)); }
+#pet[data-emotion="闹别扭"] .pet-body { filter: drop-shadow(0 4px 8px rgba(10, 16, 32, .22)); }
+#pet[data-emotion="兴奋"] .pet-body { filter: drop-shadow(0 4px 10px rgba(121, 104, 222, .36)); }
 #pet-state.drowsy { animation: sleep 4.5s ease-in-out infinite; }
 @keyframes work {
   0%, 100% { transform: translateY(0) scale(1); }
