@@ -323,3 +323,29 @@ body[data-live2d="on"] #pet.drowsy { animation: none; }
 #menu .sep { height: 1px; margin: 4px 6px; background: rgba(120, 108, 160, 0.22); }
 
 .hidden { display: none !important; }
+
+/* ---------------- 特效层（悬停摸头的爱心等） ---------------- */
+#pet-fx {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.fx-heart {
+  position: absolute;
+  bottom: 79%;
+  width: 18px;
+  height: 18px;
+  opacity: 0;
+  pointer-events: none;
+  -webkit-user-drag: none;
+  animation: fxHeartFloat 1.5s cubic-bezier(.2, .7, .3, 1) forwards;
+}
+
+@keyframes fxHeartFloat {
+  0%   { opacity: 0; transform: translate(0, 6px) scale(.45); }
+  22%  { opacity: 1; transform: translate(calc(var(--drift, 0px) * .3), -6px) scale(1); }
+  100% { opacity: 0; transform: translate(var(--drift, 0px), -38px) scale(.78); }
+}

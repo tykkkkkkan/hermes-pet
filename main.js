@@ -592,6 +592,23 @@ function createWindow() {
     }
   });
 
+  // 开发自检：PET_HOVER_TEST=1 模拟鼠标停在头顶，验证摸头互动与爱心特效
+  if (process.env.PET_HOVER_TEST) {
+    setTimeout(() => {
+      const script = `(function(){
+        var a = document.getElementById('pet-hit-area').getBoundingClientRect();
+        var x = a.left + a.width * 0.5;
+        var y = a.top + a.height * 0.12;
+        function fire(){ window.dispatchEvent(new MouseEvent('mousemove', { clientX: x, clientY: y, bubbles: true })); }
+        fire();
+        setTimeout(fire, 620);
+        setTimeout(fire, 900);
+        return 'hover-injected';
+      })()`;
+      win.webContents.executeJavaScript(script).then((r) => console.log('hover test:', r)).catch(() => {});
+    }, 3000);
+  }
+
   // 开发自检：PET_DRAG_TEST=1 模拟连续拖拽，核对窗口位置与画布尺寸是否稳定
   if (process.env.PET_DRAG_TEST) {
     setTimeout(async () => {

@@ -355,3 +355,56 @@ petHitArea.addEventListener('mouseenter', () => {
 /* ---------------- 托盘消息 ---------------- */
 window.pet.onToast((text) => sayAddressed(text, 1800));
 
+
+/* ---------------- 悬停摸头 ---------------- */
+/* 对标 DSH 的「摸头互动」：鼠标在头顶停留一会儿就主动回应，而不是必须点一下。
+ * 触发后进入冷却，避免鼠标停在上面时反复刷屏。 */
+const fxLayer = document.getElementById('pet-fx');
+const HEAD_LINES = [
+  '……帽子要歪了。',
+  '唔，头发会乱。',
+  '摸一下就够了吧。',
+  '手凉，先去忙正事。',
+  '我知道你在，不用一直摸。'
+];
+let hoverHeadSince = 0;
+let lastPetAt = 0;
+
+function spawnHeart() {
+  if (!fxLayer) return;
+  const img = document.createElement('img');
+  img.className = 'fx-heart';
+  img.src = '../assets/fx/png/fx-heart.png';
+  img.alt = '';
+  img.draggable = false;
+  img.style.left = `${34 + Math.random() * 32}%`;
+  img.style.setProperty('--drift', `${(Math.random() * 34 - 17).toFixed(0)}px`);
+  img.style.animationDelay = `${Math.round(Math.random() * 170)}ms`;
+  fxLayer.appendChild(img);
+  setTimeout(() => img.remove(), 1800);
+}
+
+function petHead() {
+  const now = Date.now();
+  if (now - lastPetAt < 6000) return;
+  lastPetAt = now;
+  for (let i = 0; i < 3; i++) spawnHeart();
+  window.petLive2d?.onInteract('head');
+  say(HEAD_LINES[Math.floor(Math.random() * HEAD_LINES.length)], 2400);
+}
+
+window.addEventListener('mousemove', (e) => {
+  if (dragging || bubbleVisible()) { hoverHeadSince = 0; return; }
+  const r = petHitArea.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  const x = (e.clientX - r.left) / r.width;
+  const y = (e.clientY - r.top) / r.height;
+  const inPet = x >= 0 && x <= 1 && y >= 0 && y <= 1;
+  const zone = inPet ? hitPetRegion(x, y) : null;
+  if (zone !== 'head') { hoverHeadSince = 0; return; }
+  if (!hoverHeadSince) { hoverHeadSince = Date.now(); return; }
+  if (Date.now() - hoverHeadSince >= 480) {
+    hoverHeadSince = 0;
+    petHead();
+  }
+});
