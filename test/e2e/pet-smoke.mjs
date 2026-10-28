@@ -162,7 +162,7 @@ async function main() {
         img.src = src;
       })));
     })()`);
-    check('六态表情贴片全部加载', faces?.length >= 6 && faces.every((face) => face.ok), JSON.stringify(faces));
+    check('十二态表情贴片全部加载', faces?.length >= 12 && faces.every((face) => face.ok), JSON.stringify(faces));
 
     // ---- 4. 立绘分层图片没有 404 ----
     const layers = await evaluate(cdp, `(() => {
