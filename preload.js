@@ -74,6 +74,9 @@ contextBridge.exposeInMainWorld('pet', {
   interact: (zone) => ipcRenderer.send('pet-interact', zone),
   getSettings: () => ipcRenderer.invoke('settings-get'),
   saveSettings: (input) => ipcRenderer.invoke('settings-save', input),
+  previewAppearance: (input) => ipcRenderer.send('appearance-preview', input),
+  onAppearance: (cb) => ipcRenderer.on('appearance', (_e, v) => cb(v)),
+  onSettingsChanged: (cb) => ipcRenderer.on('settings-changed', (_e, v) => cb(v)),
   getHistory: () => ipcRenderer.invoke('history-get'),
   sendChat: (text) => ipcRenderer.invoke('chat-send', text)
 });

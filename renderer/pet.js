@@ -50,8 +50,9 @@ const LINES = [
 ];
 
 let bubbleTimer = null;
-function say(text, ms = 4200) {
+function say(text, ms = 4200, options = {}) {
   bubble.textContent = text;
+  if (options.voice !== false) speakText(text);
   bubble.classList.remove('hidden');
   requestAnimationFrame(() => bubble.classList.add('show'));
   window.petLive2d?.speak();
@@ -261,7 +262,7 @@ function paintState(state) {
 window.pet.onState(paintState);
 window.pet.getState().then(paintState).catch(() => {});
 window.pet.onAnnounce((text, options) => {
-  say(text, options.kind === 'error' ? 6000 : 4800);
+  say(text, options.kind === 'error' ? 6000 : 4800, { voice: options.voice });
 });
 statePill.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -411,3 +412,69 @@ window.addEventListener('mousemove', (e) => {
     petHead();
   }
 });
+
+/* ---------------- 语音播报（系统离线语音，零 API 成本） ---------------- */
+const voiceCache = { enabled: true, name: '', rate: 100, volume: 85 };
+
+function pickChineseVoice() {
+  let voices = [];
+  try { voices = speechSynthesis.getVoices() || []; } catch { return null; }
+  const zh = voices.filter((v) => /^zh/i.test(v.lang) || /Chinese|Huihui|Yaoyao|Kangkang|Xiaoxiao/i.test(v.name));
+  if (!zh.length) return null;
+  if (voiceCache.name) {
+    const hit = zh.find((v) => v.name === voiceCache.name);
+    if (hit) return hit;
+  }
+  return zh.find((v) => /Huihui|Yaoyao|Xiaoxiao|Female|女/i.test(v.name)) || zh[0];
+}
+
+function speakText(text) {
+  if (!voiceCache.enabled) return;
+  const clean = String(text || '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`[^`]*`/g, '')
+    .replace(/[#*_>~]/g, '')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 90);
+  if (!clean) return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(clean);
+    const v = pickChineseVoice();
+    if (v) u.voice = v;
+    u.lang = 'zh-CN';
+    u.rate = (voiceCache.rate || 100) / 100;
+    u.volume = (voiceCache.volume == null ? 85 : voiceCache.volume) / 100;
+    speechSynthesis.speak(u);
+  } catch { /* 没有可用语音就静默 */ }
+}
+
+function applyPetSettings(s) {
+  if (!s) return;
+  voiceCache.enabled = s.voiceEnabled !== false;
+  voiceCache.name = s.voiceName || '';
+  voiceCache.rate = s.voiceRate || 100;
+  voiceCache.volume = s.volume === undefined ? (s.voiceVolume == null ? 85 : s.voiceVolume) : s.volume;
+  if (s.lineFrequency) lineFrequency = s.lineFrequency;
+  if (s.petOpacity != null) petEl.style.opacity = String(Math.max(40, Math.min(100, s.petOpacity)) / 100);
+}
+
+let lineFrequency = 'normal';
+window.pet.getSettings().then(applyPetSettings).catch(() => {});
+window.pet.onSettingsChanged(applyPetSettings);
+window.pet.onAppearance((v) => {
+  if (v && v.opacity != null) petEl.style.opacity = String(v.opacity);
+});
+
+/* 待机时按「台词频率」偶尔主动说一句 */
+setInterval(() => {
+  if (lineFrequency === 'quiet') return;
+  if (dragging || bubbleVisible() || menuOpen) return;
+  if ((petEl.dataset.state || 'idle') !== 'idle') return;
+  if (Date.now() - lastActivityAt < 60000) return;
+  const chance = lineFrequency === 'chatty' ? 0.55 : 0.25;
+  if (Math.random() > chance) return;
+  sayAddressed(LINES[Math.floor(Math.random() * LINES.length)], 3600);
+}, 90000);

@@ -31,14 +31,88 @@ function paintState(state) {
   $('connection-state').textContent = state.hermesText || state.statusText || 'Hermes 离线';
 }
 
+let settingsCache = {};
+
+/* 把数值同步到滑块的百分比显示 */
+function paintSlider(id, valId, value) {
+  const el = $(id);
+  const out = $(valId);
+  if (el) el.value = String(value);
+  if (out) out.textContent = `${value}%`;
+}
+
+function fillVoiceOptions(selected) {
+  const sel = $('voice-name');
+  if (!sel) return;
+  const voices = (window.speechSynthesis && speechSynthesis.getVoices()) || [];
+  const zh = voices.filter((v) => /^zh/i.test(v.lang) || /Chinese|Huihui|Yaoyao|Kangkang|Xiaoxiao/i.test(v.name));
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">自动（优先中文女声）</option>';
+  for (const v of zh) {
+    const opt = document.createElement('option');
+    opt.value = v.name;
+    opt.textContent = `${v.name} · ${v.lang}`;
+    sel.appendChild(opt);
+  }
+  sel.value = selected != null ? selected : keep;
+  if (sel.value !== (selected != null ? selected : keep)) sel.value = '';
+}
+
 async function loadSettings() {
   const s = await window.pet.getSettings();
+  settingsCache = s;
   $('user-name').value = s.userName || '';
   $('pet-name').value = s.petName || '';
   $('api-base').value = s.apiBase || '';
   $('model').value = s.model || '';
   $('persona').value = s.persona || '';
   $('connection-state').textContent = s.hasApiKey ? 'DeepSeek 已连接' : '本地陪伴模式';
+
+  paintSlider('pet-scale', 'pet-scale-val', s.petScale ?? 100);
+  paintSlider('pet-opacity', 'pet-opacity-val', s.petOpacity ?? 100);
+  $('line-frequency').value = s.lineFrequency || 'normal';
+
+  $('voice-enabled').checked = s.voiceEnabled !== false;
+  paintSlider('voice-rate', 'voice-rate-val', s.voiceRate ?? 100);
+  paintSlider('voice-volume', 'voice-volume-val', s.voiceVolume ?? 85);
+  fillVoiceOptions(s.voiceName || '');
+
+  $('dnd-enabled').checked = !!s.dndEnabled;
+  $('dnd-start').value = s.dndStart || '23:30';
+  $('dnd-end').value = s.dndEnd || '08:00';
+  $('dnd-allow').checked = s.dndAllowApproval !== false;
+}
+
+/* 外观类改动立刻预览，不写盘 */
+function previewAppearance() {
+  const scale = Number($('pet-scale').value) || 100;
+  const opacity = Number($('pet-opacity').value) || 100;
+  $('pet-scale-val').textContent = `${scale}%`;
+  $('pet-opacity-val').textContent = `${opacity}%`;
+  window.pet.previewAppearance({ petScale: scale, petOpacity: opacity });
+}
+
+function collectSettings() {
+  return {
+    userName: $('user-name').value,
+    petName: $('pet-name').value,
+    apiBase: $('api-base').value,
+    model: $('model').value,
+    persona: $('persona').value,
+    apiKey: $('api-key').value,
+    clearApiKey: $('clear-key').checked,
+    petScale: Number($('pet-scale').value) || 100,
+    petOpacity: Number($('pet-opacity').value) || 100,
+    lineFrequency: $('line-frequency').value,
+    voiceEnabled: $('voice-enabled').checked,
+    voiceName: $('voice-name').value,
+    voiceRate: Number($('voice-rate').value) || 100,
+    voiceVolume: Number($('voice-volume').value),
+    dndEnabled: $('dnd-enabled').checked,
+    dndStart: $('dnd-start').value || '23:30',
+    dndEnd: $('dnd-end').value || '08:00',
+    dndAllowApproval: $('dnd-allow').checked
+  };
 }
 
 async function send() {
@@ -231,19 +305,81 @@ $('task-submit').addEventListener('click', submitTask);
 $('hide-btn').addEventListener('click', () => window.pet.hideChat());
 $('close-btn').addEventListener('click', () => window.pet.closeChat());
 $('save-settings').addEventListener('click', async () => {
-  const saved = await window.pet.saveSettings({
-    userName: $('user-name').value,
-    petName: $('pet-name').value,
-    apiBase: $('api-base').value,
-    model: $('model').value,
-    persona: $('persona').value,
-    apiKey: $('api-key').value,
-    clearApiKey: $('clear-key').checked
-  });
+  const saved = await window.pet.saveSettings(collectSettings());
+  settingsCache = saved;
   $('api-key').value = '';
   $('clear-key').checked = false;
-  $('setup-msg').textContent = saved.hasApiKey ? '设置已保存，下一条消息会走模型。' : '设置已保存，当前使用本地陪伴模式。';
+  $('setup-msg').textContent = saved.hasApiKey ? '已保存，下一条消息会走模型。' : '已保存，当前使用本地陪伴模式。';
   $('connection-state').textContent = saved.hasApiKey ? 'DeepSeek 已连接' : '本地陪伴模式';
+  setTimeout(() => { $('setup-msg').textContent = ''; }, 2600);
+});
+
+/* 外观：拖动即预览 */
+['pet-scale', 'pet-opacity'].forEach((id) => {
+  $(id).addEventListener('input', previewAppearance);
+  $(id).addEventListener('change', previewAppearance);
+});
+['voice-rate', 'voice-volume'].forEach((id) => {
+  $(id).addEventListener('input', () => {
+    $(id + '-val').textContent = `${$(id).value}%`;
+  });
+});
+
+$('voice-enabled').addEventListener('change', () => {
+  if (!$('voice-enabled').checked) {
+    try { speechSynthesis.cancel(); } catch { /* ignore */ }
+  }
+});
+
+/* 试听：用当前面板上的音色/语速/音量，不写盘 */
+$('voice-test').addEventListener('click', () => {
+  if (!window.speechSynthesis) {
+    $('setup-msg').textContent = '这台机器的运行环境没有语音合成能力。';
+    return;
+  }
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance('老板，语音就按这个音色念，觉得快慢合适就保存。');
+    const name = $('voice-name').value;
+    const voices = speechSynthesis.getVoices() || [];
+    const chosen = voices.find((v) => v.name === name) || voices.find((v) => /^zh/i.test(v.lang));
+    if (chosen) u.voice = chosen;
+    u.lang = 'zh-CN';
+    u.rate = (Number($('voice-rate').value) || 100) / 100;
+    u.volume = Number($('voice-volume').value) / 100;
+    speechSynthesis.speak(u);
+    $('setup-msg').textContent = chosen ? `正在用「${chosen.name}」试听。` : '没找到中文语音包，改用默认音色试听。';
+  } catch (e) {
+    $('setup-msg').textContent = '试听失败：' + (e && e.message ? e.message : '未知错误');
+  }
+});
+
+/* 恢复默认：只复位外观/语音/免打扰，不动 API 与人设 */
+$('reset-settings').addEventListener('click', () => {
+  paintSlider('pet-scale', 'pet-scale-val', 100);
+  paintSlider('pet-opacity', 'pet-opacity-val', 100);
+  paintSlider('voice-rate', 'voice-rate-val', 100);
+  paintSlider('voice-volume', 'voice-volume-val', 85);
+  $('line-frequency').value = 'normal';
+  $('voice-enabled').checked = true;
+  $('voice-name').value = '';
+  $('dnd-enabled').checked = false;
+  $('dnd-start').value = '23:30';
+  $('dnd-end').value = '08:00';
+  $('dnd-allow').checked = true;
+  previewAppearance();
+  $('setup-msg').textContent = '已恢复默认值，点「保存设置」生效。';
+});
+
+/* 语音列表是异步加载的，加载完再填一次 */
+if (window.speechSynthesis) {
+  speechSynthesis.onvoiceschanged = () => fillVoiceOptions($('voice-name').value);
+}
+
+/* 从右键菜单进来时直接展开设置 */
+window.pet.onOpenSettings(() => {
+  $('setup').classList.remove('hidden');
+  loadSettings();
 });
 window.pet.onState(paintState);
 window.pet.onAnnounce((text) => addMessage('assistant', text, Date.now()));

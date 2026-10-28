@@ -35,27 +35,100 @@
       </div>
       <div id="inspector-content"></div>
     </section>
-    <section id="setup" class="panel hidden">
-      <div class="panel-head">
+    <section id="setup" class="panel settings hidden">
+      <div class="panel-head settings-head">
         <div>
-          <h2>连接与人设</h2>
-          <p>密钥只由主进程保存，聊天窗只拿到是否已配置的结果。</p>
+          <h2>设置</h2>
+          <p>外观与语音改动会立即生效，其余在保存后生效。</p>
         </div>
-        <button id="setup-close" class="quiet">收起</button>
+        <button id="setup-close" class="quiet">关闭</button>
       </div>
-      <div class="grid">
-        <label>主人称呼<input id="user-name" maxlength="40" /></label>
-        <label>桌宠名字<input id="pet-name" maxlength="40" /></label>
-        <label class="wide">API 地址<input id="api-base" placeholder="https://api.deepseek.com/v1" /></label>
-        <label>模型<input id="model" placeholder="deepseek-chat" /></label>
-        <label>API Key<input id="api-key" type="password" placeholder="留空表示不修改" /></label>
-        <label class="wide">专属人设<textarea id="persona" rows="4"></textarea></label>
+
+      <div class="settings-body">
+        <div class="sgroup">
+          <h3>称呼</h3>
+          <div class="grid tight">
+            <label>主人称呼<input id="user-name" maxlength="40" /></label>
+            <label>桌宠名字<input id="pet-name" maxlength="40" /></label>
+          </div>
+        </div>
+
+        <div class="sgroup">
+          <h3>外观</h3>
+          <label class="slider-row">
+            <span>桌宠大小</span>
+            <input id="pet-scale" type="range" min="70" max="140" step="5" />
+            <b id="pet-scale-val">100%</b>
+          </label>
+          <label class="slider-row">
+            <span>不透明度</span>
+            <input id="pet-opacity" type="range" min="40" max="100" step="5" />
+            <b id="pet-opacity-val">100%</b>
+          </label>
+          <label class="select-row">主动台词
+            <select id="line-frequency">
+              <option value="quiet">安静，不主动开口</option>
+              <option value="normal">正常</option>
+              <option value="chatty">话多</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="sgroup">
+          <h3>语音</h3>
+          <label class="switch-row">
+            <span>语音播报<em>用系统离线语音，不消耗 API</em></span>
+            <input id="voice-enabled" type="checkbox" class="toggle" />
+          </label>
+          <label class="select-row">音色
+            <select id="voice-name"><option value="">自动（优先中文女声）</option></select>
+          </label>
+          <label class="slider-row">
+            <span>语速</span>
+            <input id="voice-rate" type="range" min="70" max="130" step="5" />
+            <b id="voice-rate-val">100%</b>
+          </label>
+          <label class="slider-row">
+            <span>音量</span>
+            <input id="voice-volume" type="range" min="0" max="100" step="5" />
+            <b id="voice-volume-val">85%</b>
+          </label>
+          <button id="voice-test" class="quiet small">试听一句</button>
+        </div>
+
+        <div class="sgroup">
+          <h3>免打扰</h3>
+          <label class="switch-row">
+            <span>启用免打扰时段<em>时段内只静音，桌宠照常在场</em></span>
+            <input id="dnd-enabled" type="checkbox" class="toggle" />
+          </label>
+          <div class="grid tight">
+            <label>开始<input id="dnd-start" type="time" /></label>
+            <label>结束<input id="dnd-end" type="time" /></label>
+          </div>
+          <label class="switch-row">
+            <span>审批 / 需协助提醒仍出声</span>
+            <input id="dnd-allow" type="checkbox" class="toggle" />
+          </label>
+        </div>
+
+        <details class="sgroup">
+          <summary><h3>连接与人设</h3></summary>
+          <div class="grid tight">
+            <label class="wide">API 地址<input id="api-base" placeholder="https://api.deepseek.com/v1" /></label>
+            <label>模型<input id="model" placeholder="deepseek-chat" /></label>
+            <label>API Key<input id="api-key" type="password" placeholder="留空表示不修改" /></label>
+            <label class="wide">专属人设<textarea id="persona" rows="4"></textarea></label>
+          </div>
+          <label class="check"><input id="clear-key" type="checkbox" /> 清除已保存密钥</label>
+        </details>
       </div>
-      <div class="setup-foot">
-        <label class="check"><input id="clear-key" type="checkbox" /> 清除已保存密钥</label>
+
+      <div class="settings-foot">
+        <button id="reset-settings" class="quiet">恢复默认</button>
+        <span id="setup-msg" class="hint"></span>
         <button id="save-settings" class="primary">保存设置</button>
       </div>
-      <div id="setup-msg" class="hint"></div>
     </section>
 
     <section id="task-modal" class="panel hidden">

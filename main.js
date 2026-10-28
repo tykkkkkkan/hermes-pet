@@ -56,7 +56,21 @@ const DEFAULT_SETTINGS = {
   persona: '你是 Hermes 的专属桌宠。你是可靠、机灵、略带执事感的伙伴，说话直接但有分寸。你会主动关心主人正在做的事，优先给出能执行的下一步，不说空话。',
   apiBase: 'https://api.deepseek.com/v1',
   model: 'deepseek-chat',
-  apiKeyCipher: ''
+  apiKeyCipher: '',
+  // ---- 外观 ----
+  petScale: 100,          // 70 ~ 140 (%)
+  petOpacity: 100,        // 40 ~ 100 (%)
+  lineFrequency: 'normal', // quiet | normal | chatty
+  // ---- 语音 ----
+  voiceEnabled: true,
+  voiceName: '',          // 空 = 自动挑中文女声
+  voiceRate: 100,         // 70 ~ 130
+  voiceVolume: 85,        // 0 ~ 100
+  // ---- 免打扰 ----
+  dndEnabled: false,
+  dndStart: '23:30',
+  dndEnd: '08:00',
+  dndAllowApproval: true
 };
 
 function dataDir() {
@@ -118,7 +132,10 @@ function announce(text, options = {}) {
     userInitiated: options.userInitiated === true
   })) return;
   text = prepareUtterance(text);
-  if (win && !win.isDestroyed()) win.webContents.send('announce', text, options);
+  // 免打扰只静音、不拦消息；审批/需协助类可按设置例外放行
+  const s = publicSettings();
+  const muted = inDndWindow() && !(options.critical === true && s.dndAllowApproval);
+  if (win && !win.isDestroyed()) win.webContents.send('announce', text, { ...options, voice: !muted });
   if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.send('announce', text, options);
   if (options.notify) showSystemNotification(text);
 }
@@ -404,13 +421,35 @@ function getApiKey(settings = loadSettings()) {
 
 function saveSettings(input = {}) {
   const current = loadSettings();
+  const clamp = (v, lo, hi, fallback) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(lo, Math.min(hi, Math.round(n)));
+  };
+  const pickEnum = (v, list, fallback) => (list.includes(v) ? v : fallback);
+  const pickTime = (v, fallback) => (/^([01]\d|2[0-3]):[0-5]\d$/.test(String(v || '')) ? String(v) : fallback);
+
   const next = {
     ...current,
     userName: String(input.userName || current.userName).trim().slice(0, 40) || DEFAULT_SETTINGS.userName,
     petName: String(input.petName || current.petName).trim().slice(0, 40) || DEFAULT_SETTINGS.petName,
     persona: String(input.persona || current.persona).trim().slice(0, 1200) || DEFAULT_SETTINGS.persona,
     apiBase: String(input.apiBase || current.apiBase).trim().replace(/\/+$/, '') || DEFAULT_SETTINGS.apiBase,
-    model: String(input.model || current.model).trim().slice(0, 100) || DEFAULT_SETTINGS.model
+    model: String(input.model || current.model).trim().slice(0, 100) || DEFAULT_SETTINGS.model,
+
+    petScale: clamp(input.petScale, 70, 140, current.petScale ?? 100),
+    petOpacity: clamp(input.petOpacity, 40, 100, current.petOpacity ?? 100),
+    lineFrequency: pickEnum(input.lineFrequency, ['quiet', 'normal', 'chatty'], current.lineFrequency || 'normal'),
+
+    voiceEnabled: input.voiceEnabled == null ? !!current.voiceEnabled : !!input.voiceEnabled,
+    voiceName: String(input.voiceName == null ? current.voiceName || '' : input.voiceName).slice(0, 120),
+    voiceRate: clamp(input.voiceRate, 70, 130, current.voiceRate ?? 100),
+    voiceVolume: clamp(input.voiceVolume, 0, 100, current.voiceVolume ?? 85),
+
+    dndEnabled: input.dndEnabled == null ? !!current.dndEnabled : !!input.dndEnabled,
+    dndStart: pickTime(input.dndStart, current.dndStart || '23:30'),
+    dndEnd: pickTime(input.dndEnd, current.dndEnd || '08:00'),
+    dndAllowApproval: input.dndAllowApproval == null ? current.dndAllowApproval !== false : !!input.dndAllowApproval
   };
   if (input.apiKey && String(input.apiKey).trim()) {
     if (safeStorage.isEncryptionAvailable()) {
@@ -420,6 +459,7 @@ function saveSettings(input = {}) {
     next.apiKeyCipher = '';
   }
   writeJson(settingsFile(), next);
+  applyAppearance();
   return next;
 }
 
@@ -431,8 +471,58 @@ function publicSettings() {
     persona: s.persona,
     apiBase: s.apiBase,
     model: s.model,
-    hasApiKey: !!s.apiKeyCipher
+    hasApiKey: !!s.apiKeyCipher,
+    petScale: s.petScale ?? 100,
+    petOpacity: s.petOpacity ?? 100,
+    lineFrequency: s.lineFrequency || 'normal',
+    voiceEnabled: s.voiceEnabled !== false,
+    voiceName: s.voiceName || '',
+    voiceRate: s.voiceRate ?? 100,
+    voiceVolume: s.voiceVolume ?? 85,
+    dndEnabled: !!s.dndEnabled,
+    dndStart: s.dndStart || '23:30',
+    dndEnd: s.dndEnd || '08:00',
+    dndAllowApproval: s.dndAllowApproval !== false
   };
+}
+
+/* 当前是否处在免打扰时段（支持跨午夜，例如 23:30 → 08:00） */
+function inDndWindow(now = new Date()) {
+  const s = publicSettings();
+  if (!s.dndEnabled) return false;
+  const toMin = (t) => {
+    const [h, m] = String(t).split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+  };
+  const start = toMin(s.dndStart);
+  const end = toMin(s.dndEnd);
+  if (start === end) return false;
+  const cur = now.getHours() * 60 + now.getMinutes();
+  return start < end ? cur >= start && cur < end : cur >= start || cur < end;
+}
+
+/* 把外观设置真正落到窗口上：尺寸以右下角为锚点缩放，透明度只作用于角色本体 */
+function applyAppearanceValues(scalePct, opacityPct) {
+  const scale = Math.max(70, Math.min(140, Number(scalePct) || 100)) / 100;
+  const w = Math.round(WIN_W * scale);
+  const h = Math.round(WIN_H * scale);
+
+  if (win && !win.isDestroyed()) {
+    const b = win.getBounds();
+    if (b.width !== w || b.height !== h) {
+      const anchorX = b.x + b.width;
+      const anchorY = b.y + b.height;
+      win.setBounds({ x: Math.round(anchorX - w), y: Math.round(anchorY - h), width: w, height: h });
+    }
+    const opacity = Math.max(40, Math.min(100, Number(opacityPct) || 100)) / 100;
+    win.webContents.send('appearance', { opacity });
+  }
+}
+
+function applyAppearance() {
+  const s = publicSettings();
+  applyAppearanceValues(s.petScale, s.petOpacity);
+  if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.send('settings-changed', publicSettings());
 }
 
 function loadHistory() {
@@ -579,7 +669,7 @@ function createWindow() {
     // PET_LIVE2D=0 时停用 Live2D，直接回到静态立绘
     query: process.env.PET_LIVE2D === '0' ? { live2d: '0' } : {}
   });
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => { win.show(); applyAppearance(); });
   win.webContents.on('console-message', (...args) => {
     const first = args[0];
     const message = first && typeof first === 'object' && 'message' in first ? first.message : args[2];
@@ -591,6 +681,48 @@ function createWindow() {
       writeJson(path.join(dataDir(), 'position.json'), { x, y });
     }
   });
+
+  // 开发自检：PET_APPEARANCE_TEST=1 验证大小/不透明度是否真的落到窗口上
+  if (process.env.PET_APPEARANCE_TEST) {
+    setTimeout(async () => {
+      console.log('appearance before:', JSON.stringify(win.getBounds()));
+      await win.webContents
+        .executeJavaScript('window.pet.previewAppearance({ petScale: 80, petOpacity: 65 })')
+        .catch(() => {});
+      setTimeout(async () => {
+        console.log('appearance after:', JSON.stringify(win.getBounds()));
+        try {
+          fs.mkdirSync(path.join(__dirname, '.tmp'), { recursive: true });
+          const img = await win.capturePage();
+          fs.writeFileSync(path.join(__dirname, '.tmp', 'appearance-shot.png'), img.toPNG());
+          console.log('appearance shot saved');
+        } catch (e) {
+          console.log('appearance shot failed:', e.message);
+        }
+      }, 900);
+    }, 3500);
+  }
+
+  // 开发自检：PET_SETTINGS_TEST=1 打开设置面板并截图
+  if (process.env.PET_SETTINGS_TEST) {
+    setTimeout(() => {
+      showChat();
+      setTimeout(() => {
+        if (!chatWin || chatWin.isDestroyed()) return;
+        chatWin.webContents.send('open-settings');
+        setTimeout(async () => {
+          try {
+            const img = await chatWin.capturePage();
+            fs.mkdirSync(path.join(__dirname, '.tmp'), { recursive: true });
+            fs.writeFileSync(path.join(__dirname, '.tmp', 'settings-shot.png'), img.toPNG());
+            console.log('settings shot saved');
+          } catch (e) {
+            console.log('settings shot failed:', e.message);
+          }
+        }, 1200);
+      }, 1600);
+    }, 3000);
+  }
 
   // 开发自检：PET_MENU_TEST=1 打开右键菜单小窗并截图，核对它是否贴在角色侧边
   if (process.env.PET_MENU_TEST) {
@@ -900,8 +1032,9 @@ const MIN_VISIBLE = 56; // 拖出边界时至少留这么多像素在屏内
 function clampToWorkArea(x, y) {
   const cursor = screen.getCursorScreenPoint();
   const { workArea } = screen.getDisplayNearestPoint(cursor);
+  const size = win && !win.isDestroyed() ? win.getBounds() : { width: WIN_W, height: WIN_H };
   const nx = Math.max(
-    workArea.x - WIN_W + MIN_VISIBLE,
+    workArea.x - size.width + MIN_VISIBLE,
     Math.min(workArea.x + workArea.width - MIN_VISIBLE, x)
   );
   const ny = Math.max(
@@ -939,9 +1072,10 @@ ipcMain.on('move-to', (_e, x, y) => {
 ipcMain.on('snap-corner', () => {
   if (!win) return;
   const { workArea } = screen.getPrimaryDisplay();
+  const b = win.getBounds();
   win.setPosition(
-    workArea.x + workArea.width - WIN_W - 30,
-    workArea.y + workArea.height - WIN_H + 10
+    workArea.x + workArea.width - b.width - 30,
+    workArea.y + workArea.height - b.height + 10
   );
 });
 
@@ -1025,6 +1159,10 @@ ipcMain.handle('settings-get', () => publicSettings());
 ipcMain.handle('settings-save', (_e, input) => {
   const saved = saveSettings(input || {});
   return { ...publicSettings(), hasApiKey: !!saved.apiKeyCipher };
+});
+// 设置面板拖动滑块时实时预览，不写盘
+ipcMain.on('appearance-preview', (_e, input) => {
+  applyAppearanceValues(input && input.petScale, input && input.petOpacity);
 });
 ipcMain.handle('history-get', () => loadHistory());
 ipcMain.handle('chat-send', async (_e, text) => {
