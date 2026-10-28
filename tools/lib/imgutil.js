@@ -504,11 +504,72 @@ function drawBox(png, rect, color = [0, 255, 255]) {
   return png;
 }
 
+/* 沿掩码边缘向外做柔性扩边：新增像素取最近的实心像素颜色，alpha 逐层衰减。
+ * 用途：头部旋转时，原轮廓位置会露出缝隙，靠这圈柔软的外扩把缝填住。 */
+function expandEdge(png, mask, radius) {
+  const W = png.width, H = png.height;
+  let cur = Uint8Array.from(mask);
+  for (let step = 1; step <= radius; step++) {
+    const next = Uint8Array.from(cur);
+    const filled = [];
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        if (cur[i]) continue;
+        let sr = 0, sg = 0, sb = 0, n = 0;
+        const nb = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
+        for (const [nx, ny] of nb) {
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          const j = ny * W + nx;
+          if (!cur[j]) continue;
+          const si = j * 4;
+          sr += png.data[si]; sg += png.data[si + 1]; sb += png.data[si + 2];
+          n++;
+        }
+        if (n) {
+          next[i] = 1;
+          filled.push([i, Math.round(sr / n), Math.round(sg / n), Math.round(sb / n)]);
+        }
+      }
+    }
+    const a = Math.round((255 * (radius - step + 1)) / (radius + 1));
+    for (const [i, r, g, b] of filled) {
+      png.data[i * 4] = r;
+      png.data[i * 4 + 1] = g;
+      png.data[i * 4 + 2] = b;
+      png.data[i * 4 + 3] = a;
+    }
+    cur = next;
+  }
+  return png;
+}
+
+/* 从种子点在实心像素上做连通填充，并可限制最大行号。
+ * 用途：取「头部 + 头发 + 帽子」的完整轮廓——按行取跨度会漏掉两侧离得远的头发，
+ * 那些头发留在身体层，歪头时就与头部脱开，看起来像断了一块。 */
+function floodMask(png, seedX, seedY, maxY = Infinity, minAlpha = 8) {
+  const W = png.width, H = png.height;
+  const mask = new Uint8Array(W * H);
+  const stack = [[seedX, seedY]];
+  while (stack.length) {
+    const [x, y] = stack.pop();
+    if (x < 0 || y < 0 || x >= W || y >= H || y >= maxY) continue;
+    const i = y * W + x;
+    if (mask[i]) continue;
+    if (png.data[i * 4 + 3] <= minAlpha) continue;
+    mask[i] = 1;
+    stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+    // 斜向也连，避免细发丝处断开
+    stack.push([x + 1, y + 1], [x - 1, y - 1], [x + 1, y - 1], [x - 1, y + 1]);
+  }
+  return mask;
+}
+
 module.exports = {
   readPNG, writePNG, blank, clone,
   keyoutGreen, keyoutBlack, isolateMain, mainMask, bboxOfMask,
   crop, shift, diffMap, diffBoxIn, blobBoxes, rowSpan, rowSpanFrom,
   dilateMask, maskFromDiff, applyMask,
   maskOutside, featherAlpha, featherAlphaIn, padUpColumns, pasteRegion,
-  flatten, drawGuideLines, drawBox
+  flatten, drawGuideLines, drawBox, expandEdge, floodMask
 };

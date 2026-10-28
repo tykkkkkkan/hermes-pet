@@ -27,6 +27,7 @@ const PIVOT = { x: 224, y: NECK_CUT_Y };       // 头部旋转轴心（脖子根
 const EYE_RECT = { x0: 145, y0: 152, x1: 303, y1: 215 };   // 双眼合并区域
 const MOUTH_RECT = { x0: 202, y0: 216, x1: 248, y1: 247 }; // 嘴部区域
 const BODY_PAD_TOP = 232;                      // 身体层向上补绘的高度（头部转动时填缝）
+const HEAD_EDGE = 9;                           // 头部轮廓柔性外扩半径，用于旋转时填缝
 
 function prepare(file, mode) {
   const png = U.readPNG(file);
@@ -82,29 +83,30 @@ const TALK = U.shift(Cc, sC.dx, sC.dy);
 console.log(`    闭眼偏移 ${sB.dx},${sB.dy}；张嘴偏移 ${sC.dx},${sC.dy}`);
 
 console.log('[3/6] 拆分头部与身体…');
-/* 头部掩码：实心像素且在下巴切缝以上。按行取主体跨度，排除同行的翅膀等离群元素 */
-const headMask = new Uint8Array(W * H);
-for (let y = 0; y < NECK_CUT_Y; y++) {
-  const sp = U.rowSpanFrom(O, y, PIVOT.x);
-  if (!sp) continue;
-  for (let x = sp.xl; x <= sp.xr; x++) {
-    if (O.data[(y * W + x) * 4 + 3] > 8) headMask[y * W + x] = 1;
-  }
-}
+/* 头部掩码：从脸部中心向外做连通填充，上限到下巴切缝。
+   之前按行取中心跨度，会把两侧离得较远的头发排除掉，那些头发留在身体层，
+   歪头时与头部脱开、看起来像断了一块。改成连通填充后整头头发都归 head。 */
+const headMask = U.floodMask(O, PIVOT.x, Math.round(NECK_CUT_Y * 0.72), NECK_CUT_Y);
 
 let headCount = 0;
 for (let p = 0; p < W * H; p++) headCount += headMask[p];
 
-/* head 层：头部像素，眼睛位置换成闭眼眼皮（这样眼睛层淡出时自然呈现闭眼） */
+/* head 层：头部像素，眼睛位置换成闭眼眼皮（这样眼睛层淡出时自然呈现闭眼）。
+   再沿轮廓向外扩一圈柔性边缘，头部旋转时这圈「毛边」负责填住原轮廓位置的缝隙。 */
 const head = U.clone(O);
 U.applyMask(head, headMask);
 U.pasteRegion(head, CLOSED, EYE_RECT);
+U.expandEdge(head, headMask, HEAD_EDGE);
 
-/* body 层：保留完整原图。头部转动时露出的就是原图真实像素，
-   不会出现「拉伸补绘」那种水平条纹，最多是一点点边缘残影，观感反而像运动拖影。 */
+/* body 层：挖掉整个头部区域。
+   之前 body 保留完整原图，歪头时底下的原头部会露出来，两套轮廓叠成虚影。
+   挖掉后头只由 head 层提供，转动时不会再出现第二张脸。 */
 const body = U.clone(O);
+const bodyMask = new Uint8Array(W * H);
+for (let p = 0; p < W * H; p++) if (!headMask[p]) bodyMask[p] = 1;
+U.applyMask(body, bodyMask);
 
-console.log(`    头部 ${headCount} px；身体层保留完整原图，供头部转动时填缝`);
+console.log(`    头部 ${headCount} px（外扩 ${HEAD_EDGE}px 柔性边）；身体层已挖去头部区域`);
 
 console.log('[4/6] 差分提取眼睛与嘴巴…');
 /* 把全画布掩码裁成与小图层同尺寸，用于「只保留变化像素」 */

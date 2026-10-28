@@ -263,10 +263,10 @@ body[data-live2d="on"] #pet.drowsy { animation: none; }
 /* ---------- 气泡 ---------- */
 #bubble {
   position: absolute;
-  left: 18px;
-  right: 18px;
-  bottom: 314px;
-  padding: 10px 13px;
+  left: 14px;
+  right: 14px;
+  bottom: 380px;
+  padding: 10px 14px;
   background: rgba(255, 255, 255, 0.97);
   color: #1f2328;
   font-size: 13px;
@@ -274,6 +274,7 @@ body[data-live2d="on"] #pet.drowsy { animation: none; }
   border-radius: 14px;
   border: 1px solid rgba(120, 108, 160, 0.35);
   box-shadow: 0 6px 18px rgba(40, 30, 70, 0.18);
+  z-index: 6;
   opacity: 0;
   transform: translateY(6px);
   transition: opacity 0.18s ease, transform 0.18s ease;

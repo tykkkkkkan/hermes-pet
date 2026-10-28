@@ -18,8 +18,8 @@ const petMemory = require('./memory');
 const petEmotion = require('./pet-emotion');
 const petRuntime = require('./pet-runtime');
 
-const WIN_W = 224;
-const WIN_H = 372;
+const WIN_W = 340;
+const WIN_H = 500;
 const HERMES_DIR = path.join(process.env.LOCALAPPDATA || '', 'hermes');
 const PERSONA_FILE = path.join(__dirname, 'persona.json');
 
@@ -592,6 +592,47 @@ function createWindow() {
     }
   });
 
+  // 开发自检：PET_MENU_TEST=1 打开右键菜单小窗并截图，核对它是否贴在角色侧边
+  if (process.env.PET_MENU_TEST) {
+    setTimeout(async () => {
+      openMenuWindow();
+      setTimeout(async () => {
+        try {
+          if (menuWin && !menuWin.isDestroyed()) {
+            const img = await menuWin.capturePage();
+            fs.mkdirSync(path.join(__dirname, '.tmp'), { recursive: true });
+            fs.writeFileSync(path.join(__dirname, '.tmp', 'menu-shot.png'), img.toPNG());
+            console.log('menu shot saved, pos:', JSON.stringify(menuWin.getPosition()));
+          }
+        } catch (e) {
+          console.log('menu shot failed:', e.message);
+        }
+      }, 1300);
+    }, 3200);
+  }
+
+  // 开发自检：PET_TTS_PROBE=1 探测系统可用的离线语音包
+  if (process.env.PET_TTS_PROBE) {
+    setTimeout(async () => {
+      const script = `new Promise(function(res){
+        function read(){
+          try { return speechSynthesis.getVoices().map(function(v){ return v.name + ' | ' + v.lang + ' | local=' + v.localService; }); }
+          catch (e) { return ['ERR:' + e.message]; }
+        }
+        var v = read();
+        if (v.length) return res(v);
+        speechSynthesis.onvoiceschanged = function(){ res(read()); };
+        setTimeout(function(){ res(read()); }, 1800);
+      })`;
+      try {
+        const voices = await win.webContents.executeJavaScript(script);
+        console.log('tts voices:', JSON.stringify(voices));
+      } catch (e) {
+        console.log('tts probe failed:', e.message);
+      }
+    }, 2600);
+  }
+
   // 开发自检：PET_HOVER_TEST=1 模拟鼠标停在头顶，验证摸头互动与爱心特效
   if (process.env.PET_HOVER_TEST) {
     setTimeout(() => {
@@ -768,6 +809,78 @@ function showPet() {
   if (!win) createWindow();
   else { win.show(); win.setAlwaysOnTop(true, 'screen-saver'); }
 }
+
+// ---------- 右键菜单：独立小窗，贴在桌宠侧边，避免盖住角色 ----------
+let menuWin = null;
+
+function closeMenuWindow() {
+  if (menuWin && !menuWin.isDestroyed()) menuWin.destroy();
+  menuWin = null;
+}
+
+function openMenuWindow() {
+  if (!win) return;
+  if (menuWin && !menuWin.isDestroyed()) { closeMenuWindow(); return; }
+
+  const MENU_W = 186, MENU_H = 356;
+  const [wx, wy] = win.getPosition();
+  const { workArea } = screen.getDisplayNearestPoint({ x: wx, y: wy });
+
+  // 优先贴左侧；左边放不下就贴右侧
+  let x = wx - MENU_W - 10;
+  if (x < workArea.x) x = Math.min(wx + WIN_W + 10, workArea.x + workArea.width - MENU_W - 8);
+  // 纵向对齐角色的上半身
+  let y = Math.min(Math.max(wy + 90, workArea.y + 8), workArea.y + workArea.height - MENU_H - 8);
+
+  menuWin = new BrowserWindow({
+    width: MENU_W,
+    height: MENU_H,
+    x: Math.round(x),
+    y: Math.round(y),
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    alwaysOnTop: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+
+  menuWin.setAlwaysOnTop(true, 'screen-saver');
+  menuWin.loadFile(path.join(__dirname, 'renderer', 'menu.html'));
+  menuWin.once('ready-to-show', () => {
+    if (!menuWin) return;
+    menuWin.show();
+    menuWin.focus();
+    // 等它真正拿到焦点后再挂失焦关闭，否则会被自身 show 触发的 blur 立刻关掉
+    setTimeout(() => {
+      if (menuWin && !menuWin.isDestroyed()) menuWin.once('blur', () => closeMenuWindow());
+    }, 220);
+  });
+  menuWin.on('closed', () => { menuWin = null; });
+}
+
+ipcMain.on('open-menu', () => openMenuWindow());
+ipcMain.on('close-menu', () => closeMenuWindow());
+ipcMain.on('menu-action', (_e, act) => {
+  closeMenuWindow();
+  if (win && !win.isDestroyed()) win.webContents.send('menu-action', act);
+});
+ipcMain.on('open-settings', () => {
+  closeMenuWindow();
+  showChat();
+  if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.send('open-settings');
+});
 
 // ---------- 鼠标穿透：只有落在小人身上才接管点击 ----------
 ipcMain.on('set-ignore', (_e, ignore) => {

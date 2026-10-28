@@ -274,9 +274,12 @@ window.addEventListener('mousedown', (e) => {
 
 window.addEventListener('contextmenu', (e) => {
   e.preventDefault();
-  menuOpen = true;
-  menu.classList.remove('hidden');
-  window.pet.setIgnore(false);
+  // 菜单改到独立小窗里弹，贴着角色侧边，不再压在身上
+  window.pet.openMenu();
+});
+
+window.pet.onMenuAction((act) => {
+  if (act === 'talk') sayAddressed(LINES[Math.floor(Math.random() * LINES.length)]);
 });
 
 function closeMenu() {

@@ -1,0 +1,48 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+}
+
+#menu {
+  margin: 4px;
+  padding: 6px;
+  border-radius: 12px;
+  background: rgba(252, 251, 255, 0.985);
+  border: 1px solid rgba(120, 108, 160, 0.32);
+  box-shadow: 0 12px 30px rgba(40, 30, 70, 0.26);
+  font-size: 13px;
+  color: #26232f;
+}
+
+.mi {
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.mi:hover {
+  background: rgba(123, 108, 180, 0.14);
+}
+
+.mi.emphasis {
+  color: #5d50a6;
+  font-weight: 700;
+}
+
+.mi.danger {
+  color: #b4344b;
+}
+
+.sep {
+  height: 1px;
+  margin: 5px 6px;
+  background: rgba(120, 108, 160, 0.22);
+}
