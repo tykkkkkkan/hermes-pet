@@ -1,6 +1,5 @@
 const petEl = document.getElementById('pet');
 const petBody = document.getElementById('pet-body');
-const petFace = document.getElementById('pet-face');
 const petHitArea = document.getElementById('pet-hit-area');
 const bubble = document.getElementById('bubble');
 const menu = document.getElementById('menu');
@@ -16,6 +15,27 @@ const panelBlocked = document.getElementById('panel-blocked');
 const panelQueue = document.getElementById('panel-queue');
 const panelTask = document.getElementById('panel-task');
 const panelAgents = document.getElementById('panel-agents');
+
+let currentSrc = petBody.getAttribute('src');
+const BLINK_SRC = '../assets/states/v2/aligned/state/state-idle-blink.png';
+
+/* ---------------- 眨眼 ---------------- */
+function blinkOnce() {
+  if (dragging || bubbleVisible()) return;
+  if ((petEl.dataset.state || 'idle') !== 'idle') return;
+  const restore = currentSrc;
+  petBody.src = BLINK_SRC;
+  setTimeout(() => {
+    if (currentSrc === restore) petBody.src = restore;
+  }, 110);
+}
+
+function blinkLoop() {
+  setTimeout(() => {
+    blinkOnce();
+    blinkLoop();
+  }, 3800 + Math.random() * 5200);
+}
 
 /* ---------------- 台词 ---------------- */
 const LINES = [
@@ -83,8 +103,8 @@ window.addEventListener('mousemove', (e) => {
   const bounds = petEl.getBoundingClientRect();
   const lookX = Math.max(-1, Math.min(1, (e.clientX - (bounds.left + bounds.width / 2)) / (bounds.width / 2)));
   const lookY = Math.max(-1, Math.min(1, (e.clientY - (bounds.top + bounds.height / 2)) / (bounds.height / 2)));
-  petEl.style.setProperty('--look-x', `${(lookX * 1.5).toFixed(1)}px`);
-  petEl.style.setProperty('--look-y', `${(lookY * 1.2).toFixed(1)}px`);
+  petEl.style.setProperty('--look-x', `${(lookX * 2.2).toFixed(1)}px`);
+  petEl.style.setProperty('--look-y', `${(lookY * 1.8).toFixed(1)}px`);
   if (dragging) return;
   updateIgnore(e.clientX, e.clientY);
 });
@@ -191,8 +211,11 @@ function paintState(state) {
   petEl.dataset.face = s.status === 'error' && (s.failureSeverity === 'high' || s.mood <= 25) ? 'cry' : face;
   const bodyState = ['idle', 'working', 'thinking', 'success', 'sleep', 'error'].includes(s.status)
     ? s.status : 'idle';
-  petBody.src = window.pet.stateSources?.[bodyState] || window.pet.stateSources?.idle || petBody.src;
-  petFace.src = window.pet.faceSources?.[petEl.dataset.face] || window.pet.faceSources?.idle || petFace.src;
+  const nextSrc = window.pet.stateSources?.[bodyState] || window.pet.stateSources?.idle;
+  if (nextSrc && nextSrc !== currentSrc) {
+    currentSrc = nextSrc;
+    petBody.src = nextSrc;
+  }
   petEl.classList.toggle('thinking', s.status === 'thinking');
   petEl.classList.toggle('working', s.status === 'working');
   petEl.classList.toggle('success', s.status === 'success');
@@ -282,11 +305,13 @@ window.addEventListener('keydown', (e) => {
 function idleLoop() {
   const wait = 7000 + Math.random() * 8000;
   setTimeout(() => {
-    if (!dragging) {
+    if (!dragging && !bubbleVisible()) {
+      petEl.style.setProperty('--sway-dir', Math.random() < 0.5 ? '-1' : '1');
       petEl.classList.add('sway');
-      setTimeout(() => petEl.classList.remove('sway'), 1150);
+      setTimeout(() => petEl.classList.remove('sway'), 1900);
     }
     idleLoop();
+blinkLoop();
   }, wait);
 }
 idleLoop();

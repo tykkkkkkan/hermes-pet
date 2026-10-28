@@ -8,8 +8,8 @@ const petMemory = require('./memory');
 const petEmotion = require('./pet-emotion');
 const petRuntime = require('./pet-runtime');
 
-const WIN_W = 260;
-const WIN_H = 430;
+const WIN_W = 224;
+const WIN_H = 372;
 const HERMES_DIR = path.join(process.env.LOCALAPPDATA || '', 'hermes');
 const PERSONA_FILE = path.join(__dirname, 'persona.json');
 

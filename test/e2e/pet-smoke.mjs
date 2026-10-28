@@ -94,10 +94,10 @@ async function main() {
       ready: document.readyState,
       hasStage: !!document.getElementById('stage'),
       hasPet: !!document.getElementById('pet'),
-      hasFace: !!document.getElementById('pet-face'),
+      hasInner: !!document.getElementById('pet-inner'),
       size: [innerWidth, innerHeight]
     })`);
-    check('窗口渲染出桌宠页面', meta?.ready === 'complete' && meta?.hasPet && meta?.hasFace,
+    check('窗口渲染出桌宠页面', meta?.ready === 'complete' && meta?.hasPet && meta?.hasInner,
       `${meta?.title} ${meta?.size?.join('x')}`);
 
     // ---- 2. preload 暴露的 API 齐全 ----
@@ -109,24 +109,21 @@ async function main() {
     check('preload API 全部就位', api?.missing.length === 0,
       api?.missing.join(',') || `${api?.present.length}/${api?.present.length}`);
 
-    // ---- 3. 六态表情素材真能加载 ----
-    const faces = await evaluate(cdp, `(async () => {
-      const srcs = window.pet?.faceSources || {};
-      const keys = Object.keys(srcs);
-      const loaded = await Promise.all(keys.map(k => new Promise(res => {
-        const img = new Image();
-        img.onload = () => res([k, img.naturalWidth > 0]);
-        img.onerror = () => res([k, false]);
-        img.src = srcs[k];
-      })));
-      return { keys, bad: loaded.filter(([, ok]) => !ok).map(([k]) => k) };
+    // ---- 3. 只有一层人物立绘（防重影回归） ----
+    const layersInDom = await evaluate(cdp, `(() => {
+      const pet = document.getElementById('pet');
+      return {
+        images: pet ? pet.querySelectorAll('img.pet-layer').length : -1,
+        ghostFace: !!document.getElementById('pet-face'),
+        gloss: !!document.querySelector('.pet-gloss')
+      };
     })()`);
-    check('六态表情图都能加载', faces?.keys.length >= 6 && faces?.bad.length === 0,
-      `${faces?.keys.length} 张，缺 ${faces?.bad.join(',') || '无'}`);
+    check('只渲染一层人物立绘，没有重影层', layersInDom?.images === 1 && !layersInDom?.ghostFace && !layersInDom?.gloss,
+      `立绘层 ${layersInDom?.images} 张`);
 
     // ---- 4. 立绘分层图片没有 404 ----
     const layers = await evaluate(cdp, `(() => {
-      const sources = { ...window.pet.stateSources, ...window.pet.faceSources };
+      const sources = { ...window.pet.stateSources };
       return Promise.all(Object.entries(sources).map(([key, src]) => new Promise(resolve => {
         const img = new Image();
         img.onload = () => resolve({ key, src, ok: img.naturalWidth > 0 });
@@ -135,7 +132,7 @@ async function main() {
       })));
     })()`);
     const broken = (layers || []).filter((l) => !l.ok);
-    check('状态立绘与表情素材全部加载', layers?.length >= 10 && broken.length === 0,
+    check('六态状态立绘全部加载', layers?.length >= 6 && broken.length === 0,
       `${layers?.length} 张（${layers?.map((l) => l.key).join('/')}），坏 ${broken.map((b) => b.src).join(',') || '无'}`);
 
     // ---- 5. 热区命中真实坐标 ----
@@ -160,10 +157,10 @@ async function main() {
 
     // ---- 7. 状态切换后表情层真的换图 ----
     const switched = await evaluate(cdp, `(async () => {
-      const before = document.getElementById('pet-face').getAttribute('src');
+      const before = document.getElementById('pet-body').getAttribute('src');
       window.pet.interact('head');
       await new Promise(r => setTimeout(r, 800));
-      const after = document.getElementById('pet-face').getAttribute('src');
+      const after = document.getElementById('pet-body').getAttribute('src');
       const bubble = document.getElementById('bubble');
       return { before, after, changed: !!bubble.textContent.trim() && !bubble.classList.contains('hidden') };
     })()`);
