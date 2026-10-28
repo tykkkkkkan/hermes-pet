@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>Live2D 技术验证</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #15161c; overflow: hidden; }
+    #stage { position: relative; width: 100%; height: 100%; }
+    #log {
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      width: 46%;
+      font: 10px/1.55 Consolas, "Cascadia Mono", monospace;
+      color: #8f99a8;
+      white-space: pre-wrap;
+      z-index: 10;
+      pointer-events: none;
+      opacity: .7;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, .9);
+    }
+    #log .ok { color: #7ee2a8; }
+    #log .err { color: #ff8b8b; }
+    #log .dim { color: #6c7686; }
+    #hint {
+      position: absolute;
+      right: 12px;
+      top: 12px;
+      font: 11px/1.5 "Microsoft YaHei", sans-serif;
+      color: #4d5563;
+      z-index: 10;
+      pointer-events: none;
+    }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <div id="hint">移动鼠标看向 / 点击触发动作</div>
+    <div id="log">启动中…</div>
+  </div>
+
+  <!-- 加载顺序有讲究：PIXI → Cubism Core → pixi-live2d-display（它把 API 挂到 PIXI.live2d） -->
+  <script src="../node_modules/pixi.js/dist/browser/pixi.min.js"></script>
+  <script src="vendor/live2dcubismcore.min.js"></script>
+  <script src="../node_modules/pixi-live2d-display/dist/cubism4.min.js"></script>
+  <script src="live2d-test.js"></script>
+</body>
+</html>

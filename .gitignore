@@ -24,3 +24,8 @@ __pycache__/
 shot.png
 test/e2e/artifacts/
 .codex/
+
+# Live2D 资源（专有 Core + 官方示例模型，不入库，用 npm run fetch:live2d 拉取）
+renderer/vendor/live2dcubismcore*.js
+assets/live2d/
+live2d-test.png

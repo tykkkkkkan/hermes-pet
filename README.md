@@ -160,6 +160,31 @@ test/                   unit + e2e 冒烟
 docs/                   规格书、对标差距、素材规格、实施指令
 ```
 
+## Live2D 2.5D 改造（进行中）
+
+目标是把静态立绘换成 Live2D 骨骼模型，做出「会扭头、会呼吸、能被戳」的 2.5D 效果。
+
+| 阶段 | 状态 | 说明 |
+|---|---|---|
+| 0. 技术验证 | ✅ 已跑通 | PixiJS + pixi-live2d-display + Cubism Core 4.2 渲染官方示例模型 |
+| 1. 素材分层 | ⬜ 待做 | 需要把单层立绘拆成部件图层（美术产出） |
+| 2. 绑骨骼 | ⬜ 待做 | Cubism Editor 绑网格/参数/表情/物理，导出 moc3 |
+| 3. 接入六态 | ⬜ 待做 | 映射状态机、表情、四区互动 |
+
+技术栈与版本约束（踩过的坑）：
+
+```text
+PixiJS              6.5.10（pixi-live2d-display 0.4 只支持 v6）
+pixi-live2d-display 0.4.0（Cubism 4 运行时）
+Cubism Core         4.2.4（csmGetVersion=0x04020004）
+```
+
+- **Core 必须用 4.x**：官方 CDN 现在给的是 5.1，`Moc.fromArrayBuffer` 会直接返回空。本地放在 `renderer/vendor/live2dcubismcore.min.js`。
+- **模型文件走 `petasset://` 自定义协议**：`file://` 下 fetch 读 `.moc3` 会被 CORS 拦；协议层直接读磁盘并禁用缓存，否则替换素材后仍读到旧文件。
+- 验证页入口：`PET_LIVE2D_TEST=1 npm start`，会额外开一个测试窗，不影响桌宠本体。
+
+示例模型 Hiyori 来自 Live2D 官方 CubismWebSamples，按 Free Material License 使用，仅用于技术验证，不随角色一起分发。
+
 ## 路线图
 
 - [x] 六态视觉与状态播报打通
@@ -167,6 +192,8 @@ docs/                   规格书、对标差距、素材规格、实施指令
 - [x] 拖文件派单、聊天窗、记忆归档
 - [x] 插件化，对外提供 6 个工具
 - [x] 真实任务驱动的成功/失败播报全链路验证
+- [x] Live2D 渲染技术验证（Phase 0：PixiJS + Cubism Core 4.2 跑通）
+- [ ] 2.5D 化：分层素材 → 绑骨骼 → 接入六态（Phase 1–3）
 - [ ] 语音输入转写走本地 ASR（当前仅浏览器 SpeechRecognition 入口）
 - [ ] 仪表盘形态：任务列表与 Agent 状态面板
 - [ ] 2.5D 化（Live2D/Spine 骨骼 + 网格形变，替代静态帧切换）

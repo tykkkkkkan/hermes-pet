@@ -7,7 +7,8 @@
     "start": "electron .",
     "smoke": "node test/e2e/pet-smoke.mjs",
     "test": "node --test test/memory.test.js test/pet-emotion.test.js test/pet-regions.test.js test/pet-runtime.test.js",
-    "plugin:validate": "hermes plugins validate . --json"
+    "plugin:validate": "hermes plugins validate . --json",
+    "fetch:live2d": "node tools/fetch-live2d-assets.js"
   },
   "keywords": [
     "desktop-pet",
@@ -33,5 +34,9 @@
     "electron": "^45.0.0",
     "jpeg-js": "^0.4.4",
     "pngjs": "^7.0.0"
+  },
+  "dependencies": {
+    "pixi-live2d-display": "^0.4.0",
+    "pixi.js": "^6.5.10"
   }
 }

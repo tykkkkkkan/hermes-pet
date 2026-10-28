@@ -1,8 +1,18 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, shell, globalShortcut, safeStorage, Notification } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, shell, globalShortcut, safeStorage, Notification, protocol, net } = require('electron');
 const http = require('http');
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
+
+// Live2D 模型要用 fetch 读取 .moc3 / .model3.json，file:// 下会被 CORS 拦。
+// 这里注册一个只读的本地协议，把项目目录映射成 petasset://app/<相对路径>。
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'petasset',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true }
+  }
+]);
 const hermesBridge = require('./hermes-bridge');
 const petMemory = require('./memory');
 const petEmotion = require('./pet-emotion');
@@ -585,6 +595,38 @@ function createWindow() {
   win.on('closed', () => { win = null; });
 }
 
+// Phase 0 技术验证窗：只用来确认 Live2D 渲染链路能跑通，不影响桌宠本体。
+// 启动方式：PET_LIVE2D_TEST=1 npm start
+function createLive2dTestWindow() {
+  const testWin = new BrowserWindow({
+    width: 520,
+    height: 720,
+    title: 'Live2D 技术验证',
+    backgroundColor: '#15161c',
+    show: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true
+    }
+  });
+  testWin.loadURL('petasset://app/renderer/live2d-test.html');
+  testWin.webContents.on('console-message', (...args) => {
+    const first = args[0];
+    const message = first && typeof first === 'object' && 'message' in first ? first.message : args[2];
+    console.log('[live2d-test]', message);
+  });
+  if (process.env.PET_LIVE2D_SHOT) {
+    const delay = Number(process.env.PET_LIVE2D_SHOT) || 6000;
+    setTimeout(async () => {
+      const img = await testWin.capturePage();
+      fs.writeFileSync(path.join(__dirname, 'live2d-test.png'), img.toPNG());
+      console.log('live2d shot saved:', path.join(__dirname, 'live2d-test.png'));
+    }, delay);
+  }
+  return testWin;
+}
+
 function createChatWindow() {
   if (chatWin && !chatWin.isDestroyed()) return chatWin;
   chatWin = new BrowserWindow({
@@ -797,6 +839,36 @@ if (!gotLock) {
 } else {
   app.on('second-instance', () => showPet());
   app.whenReady().then(() => {
+    // 只读地把项目目录映射成 petasset://app/<相对路径>，供 Live2D 用 fetch 读取模型
+    // 直接读磁盘、不走 net.fetch：走网络栈会命中 Chromium 缓存，替换素材后仍读到旧文件
+    protocol.handle('petasset', async (request) => {
+      const { pathname } = new URL(request.url);
+      const rel = decodeURIComponent(pathname).replace(/^\/+/, '');
+      const target = path.normalize(path.join(__dirname, rel));
+      if (!target.startsWith(__dirname)) {
+        return new Response('forbidden', { status: 403 });
+      }
+      const types = {
+        '.html': 'text/html; charset=utf-8',
+        '.js': 'text/javascript; charset=utf-8',
+        '.css': 'text/css; charset=utf-8',
+        '.json': 'application/json; charset=utf-8',
+        '.png': 'image/png',
+        '.moc3': 'application/octet-stream'
+      };
+      try {
+        const data = await fs.promises.readFile(target);
+        return new Response(data, {
+          headers: {
+            'Content-Type': types[path.extname(target).toLowerCase()] || 'application/octet-stream',
+            'Cache-Control': 'no-store'
+          }
+        });
+      } catch {
+        return new Response('not found', { status: 404 });
+      }
+    });
+
     fs.mkdirSync(HERMES_DIR, { recursive: true });
     petState = loadPetState();
     createWindow();
@@ -804,6 +876,7 @@ if (!gotLock) {
     startBridgeServer();
     startHermesPolling();
     globalShortcut.register('CommandOrControl+Shift+H', showChat);
+    if (process.env.PET_LIVE2D_TEST === '1') createLive2dTestWindow();
   });
 }
 
