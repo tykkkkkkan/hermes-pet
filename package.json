@@ -1,15 +1,34 @@
 {
   "name": "hermes-pet",
   "version": "0.1.0",
-  "description": "Hermes 桌宠 —— 透明置顶的二次元执事小人",
+  "description": "Hermes 桌宠：Electron 透明置顶桌宠 + 插件桥接，实时同步 AI Agent 任务状态并主动播报",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "smoke": "node test/e2e/pet-smoke.mjs",
+    "test": "node --test test/memory.test.js test/pet-emotion.test.js test/pet-regions.test.js test/pet-runtime.test.js",
     "plugin:validate": "hermes plugins validate . --json"
   },
-  "author": "汤伊轲",
+  "keywords": [
+    "desktop-pet",
+    "electron",
+    "ai-agent",
+    "hermes",
+    "windows",
+    "transparent-window",
+    "plugin"
+  ],
+  "homepage": "https://github.com/tykkkkkkan/hermes-pet#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tykkkkkkan/hermes-pet.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tykkkkkkan/hermes-pet/issues"
+  },
+  "author": "汤伊轲 (tykkkkkkan)",
   "license": "MIT",
+  "private": false,
   "devDependencies": {
     "electron": "^45.0.0",
     "jpeg-js": "^0.4.4",
