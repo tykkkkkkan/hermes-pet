@@ -4,7 +4,6 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
-
 // Live2D 模型要用 fetch 读取 .moc3 / .model3.json，file:// 下会被 CORS 拦。
 // 这里注册一个只读的本地协议，把项目目录映射成 petasset://app/<相对路径>。
 protocol.registerSchemesAsPrivileged([
@@ -18,12 +17,11 @@ const petMemory = require('./memory');
 const petEmotion = require('./pet-emotion');
 const petRuntime = require('./pet-runtime');
 const { createTouchPicker } = require('./pet-interactions');
-
+const createSettingsStore = require('./settings-store');
 const WIN_W = 340;
 const WIN_H = 500;
 const HERMES_DIR = path.join(process.env.LOCALAPPDATA || '', 'hermes');
 const PERSONA_FILE = path.join(__dirname, 'persona.json');
-
 let win = null;
 let tray = null;
 let chatWin = null;
@@ -35,8 +33,6 @@ let previousHermes = null;
 let successUntil = 0;
 let bridgeServer = null;
 let bridgeToken = '';
-let persona = readJson(PERSONA_FILE, {});
-const pickTouchLine = createTouchPicker(persona);
 const PANEL_MAX_PER_GROUP = 3;
 const emptyTaskPanel = () => ({
   running: { items: [], total: 0 },
@@ -60,41 +56,24 @@ let petState = {
   affection: 50,
   mood: 72
 };
-
-const DEFAULT_SETTINGS = {
-  userName: '好大爹',
-  petName: '赫尔墨兹',
-  persona: '你是 Hermes 的专属桌宠。你是可靠、机灵、略带执事感的伙伴，说话直接但有分寸。你会主动关心主人正在做的事，优先给出能执行的下一步，不说空话。',
-  apiBase: 'https://api.deepseek.com/v1',
-  model: 'deepseek-chat',
-  apiKeyCipher: '',
-  // ---- 外观 ----
-  petScale: 100,          // 70 ~ 140 (%)
-  petOpacity: 100,        // 40 ~ 100 (%)
-  lineFrequency: 'normal', // quiet | normal | chatty
-  // ---- 语音 ----
-  voiceEnabled: true,
-  voiceName: '',          // 空 = 自动挑中文女声
-  voiceRate: 100,         // 70 ~ 130
-  voiceVolume: 85,        // 0 ~ 100
-  // ---- 免打扰 ----
-  dndEnabled: false,
-  dndStart: '23:30',
-  dndEnd: '08:00',
-  dndAllowApproval: true
-};
-
-function dataDir() {
-  return app.getPath('userData');
-}
-
-function readJson(file, fallback) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
-  } catch {
-    return fallback;
-  }
-}
+const settingsStore = createSettingsStore({
+  dataDir: () => app.getPath('userData'),
+  safeStorage,
+  hermesDir: HERMES_DIR,
+  onSave: () => applyAppearance()
+});
+const { readJson, writeJson } = settingsStore;
+const dataDir = settingsStore.dataDir;
+const settingsFile = settingsStore.settingsFile;
+const historyFile = settingsStore.historyFile;
+const stateFile = settingsStore.stateFile;
+const loadSettings = settingsStore.load;
+const saveSettings = settingsStore.save;
+const getApiKey = settingsStore.getApiKey;
+const importKeyFromHermes = settingsStore.importFromHermes;
+const publicSettings = settingsStore.publicView;
+const persona = readJson(PERSONA_FILE, {});
+const pickTouchLine = createTouchPicker(persona);
 
 function applyEmotionEvent(event) {
   petState = petEmotion.applyEvent(petState, event);
@@ -135,7 +114,6 @@ function statusFromSnapshot(snapshot) {
 function taskTitle(task) {
   return String(task?.title || task?.name || `任务 #${task?.id ?? '?'}`).trim();
 }
-
 const slimTask = (task) => ({
   id: task?.id ?? '',
   title: taskTitle(task),
@@ -147,6 +125,7 @@ const packTaskGroup = (list) => ({
   items: slimGroup(list),
   total: Array.isArray(list) ? list.length : 0
 });
+
 function buildTaskPanel(next) {
   const allTasks = Array.isArray(next?.tasks) ? next.tasks : [];
   const queued = allTasks.filter((task) => ['todo', 'ready', 'scheduled'].includes(String(task?.status || '').toLowerCase()));
@@ -376,7 +355,6 @@ function applyHermesSnapshot(snapshot) {
   };
   if (statusChanged && (next.running || []).length) applyEmotionEvent('working');
   pushPetState();
-
   if (previousHermes) {
     for (const { task } of transitions) {
       if (task.status === 'done') {
@@ -404,7 +382,6 @@ function applyHermesSnapshot(snapshot) {
   previousHermes = next;
   savePetState();
 }
-
 async function pollHermes() {
   if (hermesPollInFlight) return;
   hermesPollInFlight = true;
@@ -423,147 +400,11 @@ function startHermesPolling() {
   hermesTimer = setInterval(pollHermes, 3000);
 }
 
-function writeJson(file, value) {
-  const tmp = `${file}.tmp`;
-  try {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(tmp, JSON.stringify(value, null, 2), 'utf8');
-    fs.renameSync(tmp, file);
-    return true;
-  } catch {
-    try { fs.unlinkSync(tmp); } catch {}
-    return false;
-  }
-}
-
-function settingsFile() {
-  return path.join(dataDir(), 'settings.json');
-}
-
-function historyFile() {
-  return path.join(dataDir(), 'memory', 'chat.json');
-}
-
-function stateFile() {
-  return path.join(dataDir(), 'memory', 'state.json');
-}
-
 function recordSessionMessage(sessionId, role, content, at = Date.now()) {
   return petMemory.record(path.join(dataDir(), 'memory'), sessionId, role, content, at);
 }
-
-function loadSettings() {
-  return { ...DEFAULT_SETTINGS, ...(readJson(settingsFile(), {}) || {}) };
-}
-
-function getApiKey(settings = loadSettings()) {
-  if (!settings.apiKeyCipher || !safeStorage.isEncryptionAvailable()) return '';
-  try {
-    return safeStorage.decryptString(Buffer.from(settings.apiKeyCipher, 'base64'));
-  } catch {
-    return '';
-  }
-}
-
-/* 从 Hermes 的 .env 导入 DeepSeek 密钥，省得再手填一遍。
- * 只在桌宠自己还没配密钥时自动执行；也可以从设置面板手动触发。 */
-function importKeyFromHermes() {
-  const envPath = path.join(process.env.LOCALAPPDATA || '', 'hermes', '.env');
-  try {
-    if (!fs.existsSync(envPath)) return { ok: false, reason: '没找到 Hermes 的 .env' };
-    const raw = fs.readFileSync(envPath, 'utf8');
-    const pick = (name) => {
-      const m = raw.match(new RegExp('^\\s*' + name + '\\s*=\\s*(.+)$', 'm'));
-      return m ? m[1].trim().replace(/^["']|["']$/g, '') : '';
-    };
-    const key = pick('DEEPSEEK_API_KEY');
-    if (!key) return { ok: false, reason: '.env 里没有 DEEPSEEK_API_KEY' };
-    if (!safeStorage.isEncryptionAvailable()) return { ok: false, reason: '系统加密存储不可用' };
-
-    const base = pick('DEEPSEEK_API_BASE') || 'https://api.deepseek.com/v1';
-    const current = loadSettings();
-    const next = {
-      ...current,
-      apiBase: base,
-      model: current.model || 'deepseek-chat',
-      apiKeyCipher: safeStorage.encryptString(key).toString('base64')
-    };
-    writeJson(settingsFile(), next);
-    console.log(`[hermes-pet] 已从 Hermes 导入 DeepSeek 密钥（长度 ${key.length}，base ${base}）`);
-    return { ok: true, base, keyLength: key.length };
-  } catch (e) {
-    return { ok: false, reason: e.message };
-  }
-}
-
-function saveSettings(input = {}) {
-  const current = loadSettings();
-  const clamp = (v, lo, hi, fallback) => {
-    const n = Number(v);
-    if (!Number.isFinite(n)) return fallback;
-    return Math.max(lo, Math.min(hi, Math.round(n)));
-  };
-  const pickEnum = (v, list, fallback) => (list.includes(v) ? v : fallback);
-  const pickTime = (v, fallback) => (/^([01]\d|2[0-3]):[0-5]\d$/.test(String(v || '')) ? String(v) : fallback);
-
-  const next = {
-    ...current,
-    userName: String(input.userName || current.userName).trim().slice(0, 40) || DEFAULT_SETTINGS.userName,
-    petName: String(input.petName || current.petName).trim().slice(0, 40) || DEFAULT_SETTINGS.petName,
-    persona: String(input.persona || current.persona).trim().slice(0, 1200) || DEFAULT_SETTINGS.persona,
-    apiBase: String(input.apiBase || current.apiBase).trim().replace(/\/+$/, '') || DEFAULT_SETTINGS.apiBase,
-    model: String(input.model || current.model).trim().slice(0, 100) || DEFAULT_SETTINGS.model,
-
-    petScale: clamp(input.petScale, 70, 140, current.petScale ?? 100),
-    petOpacity: clamp(input.petOpacity, 40, 100, current.petOpacity ?? 100),
-    lineFrequency: pickEnum(input.lineFrequency, ['quiet', 'normal', 'chatty'], current.lineFrequency || 'normal'),
-
-    voiceEnabled: input.voiceEnabled == null ? !!current.voiceEnabled : !!input.voiceEnabled,
-    voiceName: String(input.voiceName == null ? current.voiceName || '' : input.voiceName).slice(0, 120),
-    voiceRate: clamp(input.voiceRate, 70, 130, current.voiceRate ?? 100),
-    voiceVolume: clamp(input.voiceVolume, 0, 100, current.voiceVolume ?? 85),
-
-    dndEnabled: input.dndEnabled == null ? !!current.dndEnabled : !!input.dndEnabled,
-    dndStart: pickTime(input.dndStart, current.dndStart || '23:30'),
-    dndEnd: pickTime(input.dndEnd, current.dndEnd || '08:00'),
-    dndAllowApproval: input.dndAllowApproval == null ? current.dndAllowApproval !== false : !!input.dndAllowApproval
-  };
-  if (input.apiKey && String(input.apiKey).trim()) {
-    if (safeStorage.isEncryptionAvailable()) {
-      next.apiKeyCipher = safeStorage.encryptString(String(input.apiKey).trim()).toString('base64');
-    }
-  } else if (input.clearApiKey) {
-    next.apiKeyCipher = '';
-  }
-  writeJson(settingsFile(), next);
-  applyAppearance();
-  return next;
-}
-
-function publicSettings() {
-  const s = loadSettings();
-  return {
-    userName: s.userName,
-    petName: s.petName,
-    persona: s.persona,
-    apiBase: s.apiBase,
-    model: s.model,
-    hasApiKey: !!s.apiKeyCipher,
-    petScale: s.petScale ?? 100,
-    petOpacity: s.petOpacity ?? 100,
-    lineFrequency: s.lineFrequency || 'normal',
-    voiceEnabled: s.voiceEnabled !== false,
-    voiceName: s.voiceName || '',
-    voiceRate: s.voiceRate ?? 100,
-    voiceVolume: s.voiceVolume ?? 85,
-    dndEnabled: !!s.dndEnabled,
-    dndStart: s.dndStart || '23:30',
-    dndEnd: s.dndEnd || '08:00',
-    dndAllowApproval: s.dndAllowApproval !== false
-  };
-}
-
 /* 当前是否处在免打扰时段（支持跨午夜，例如 23:30 → 08:00） */
+
 function inDndWindow(now = new Date()) {
   const s = publicSettings();
   if (!s.dndEnabled) return false;
@@ -577,13 +418,12 @@ function inDndWindow(now = new Date()) {
   const cur = now.getHours() * 60 + now.getMinutes();
   return start < end ? cur >= start && cur < end : cur >= start || cur < end;
 }
-
 /* 把外观设置真正落到窗口上：尺寸以右下角为锚点缩放，透明度只作用于角色本体 */
+
 function applyAppearanceValues(scalePct, opacityPct) {
   const scale = Math.max(70, Math.min(140, Number(scalePct) || 100)) / 100;
   const w = Math.round(WIN_W * scale);
   const h = Math.round(WIN_H * scale);
-
   if (win && !win.isDestroyed()) {
     const b = win.getBounds();
     if (b.width !== w || b.height !== h) {
@@ -681,7 +521,6 @@ function localReply(text) {
   if (/谢谢|辛苦/.test(t)) return '记下了。你把下一步交给我，别自己扛着。';
   return '我已经记住这句话了。现在还没接入模型，我先陪你把想法理顺；配置 DeepSeek 后，我会继续接着聊。';
 }
-
 async function askModel(text) {
   const settings = loadSettings();
   const apiKey = getApiKey(settings);
@@ -712,10 +551,10 @@ async function askModel(text) {
   if (!answer) throw new Error('模型没有返回可显示的内容');
   return String(answer).trim();
 }
-
 /* 启动落点：优先用上次拖到的位置，但要重新夹进工作区——
  * 窗口从 224×372 长到 340×500 之后，旧坐标会把右下角顶到屏幕外，
  * 脚底投影正好被任务栏吃掉。夹一遍就永远完整可见。 */
+
 function startPosition() {
   const { workArea } = screen.getPrimaryDisplay();
   const fallback = {
@@ -724,7 +563,6 @@ function startPosition() {
   };
   const saved = readJson(path.join(dataDir(), 'position.json'), null);
   if (!saved || !Number.isFinite(saved.x) || !Number.isFinite(saved.y)) return fallback;
-
   const area = screen.getDisplayMatching({ x: saved.x, y: saved.y, width: WIN_W, height: WIN_H }).workArea;
   // 下限留 0：底边贴着工作区，投影才在窗口内
   return {
@@ -735,7 +573,6 @@ function startPosition() {
 
 function createWindow() {
   const start = startPosition();
-
   win = new BrowserWindow({
     width: WIN_W,
     height: WIN_H,
@@ -761,7 +598,6 @@ function createWindow() {
       sandbox: false
     }
   });
-
   win.setAlwaysOnTop(true, 'screen-saver');
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'), {
     // PET_LIVE2D=0 时停用 Live2D，直接回到静态立绘
@@ -779,7 +615,6 @@ function createWindow() {
       writeJson(path.join(dataDir(), 'position.json'), { x, y });
     }
   });
-
   // 开发自检：PET_APPEARANCE_TEST=1 验证大小/不透明度是否真的落到窗口上
   if (process.env.PET_APPEARANCE_TEST) {
     setTimeout(async () => {
@@ -800,7 +635,6 @@ function createWindow() {
       }, 900);
     }, 3500);
   }
-
   // 开发自检：PET_SETTINGS_TEST=1 打开设置面板并截图
   if (process.env.PET_SETTINGS_TEST) {
     setTimeout(() => {
@@ -821,7 +655,6 @@ function createWindow() {
       }, 1600);
     }, 3000);
   }
-
   // 开发自检：PET_MENU_TEST=1 打开右键菜单小窗并截图，核对它是否贴在角色侧边
   if (process.env.PET_MENU_TEST) {
     setTimeout(async () => {
@@ -840,7 +673,6 @@ function createWindow() {
       }, 1300);
     }, 3200);
   }
-
   // 开发自检：PET_TTS_PROBE=1 探测系统可用的离线语音包
   if (process.env.PET_TTS_PROBE) {
     setTimeout(async () => {
@@ -862,7 +694,6 @@ function createWindow() {
       }
     }, 2600);
   }
-
   // 开发自检：PET_HOVER_TEST=1 模拟鼠标停在头顶，验证摸头互动与爱心特效
   if (process.env.PET_HOVER_TEST) {
     setTimeout(() => {
@@ -879,7 +710,6 @@ function createWindow() {
       win.webContents.executeJavaScript(script).then((r) => console.log('hover test:', r)).catch(() => {});
     }, 3000);
   }
-
   // 开发自检：PET_DRAG_TEST=1 模拟连续拖拽，核对窗口位置与画布尺寸是否稳定
   if (process.env.PET_DRAG_TEST) {
     setTimeout(async () => {
@@ -920,7 +750,6 @@ function createWindow() {
       }
     }, 3600);
   }
-
   // 开发自检：PET_SHOT=1 时把窗口渲染结果存一张图，用来核对透明与排版
   if (process.env.PET_SHOT) {
     // PET_STATE_TEST=success/error/sleep… 可在截图前切一次状态，验证参数驱动是否生效
@@ -947,9 +776,9 @@ function createWindow() {
   }
   win.on('closed', () => { win = null; });
 }
-
 // Phase 0 技术验证窗：只用来确认 Live2D 渲染链路能跑通，不影响桌宠本体。
 // 启动方式：PET_LIVE2D_TEST=1 npm start
+
 function createLive2dTestWindow() {
   const testWin = new BrowserWindow({
     width: 520,
@@ -1016,11 +845,11 @@ function showChat() {
 }
 
 // ---------- 托盘 ----------
+
 function createTray() {
   const iconPath = path.join(__dirname, 'assets', 'hermes-chibi.png');
   let icon = nativeImage.createFromPath(iconPath);
   if (!icon.isEmpty()) icon = icon.resize({ width: 32, height: 32 });
-
   tray = new Tray(icon);
   tray.setToolTip('Hermes 桌宠');
   tray.setContextMenu(Menu.buildFromTemplate([
@@ -1051,17 +880,14 @@ function closeMenuWindow() {
 function openMenuWindow() {
   if (!win) return;
   if (menuWin && !menuWin.isDestroyed()) { closeMenuWindow(); return; }
-
   const MENU_W = 206, MENU_H = 472;
   const [wx, wy] = win.getPosition();
   const { workArea } = screen.getDisplayNearestPoint({ x: wx, y: wy });
-
   // 优先贴左侧；左边放不下就贴右侧
   let x = wx - MENU_W - 10;
   if (x < workArea.x) x = Math.min(wx + WIN_W + 10, workArea.x + workArea.width - MENU_W - 8);
   // 纵向对齐角色的上半身
   let y = Math.min(Math.max(wy + 90, workArea.y + 8), workArea.y + workArea.height - MENU_H - 8);
-
   menuWin = new BrowserWindow({
     width: MENU_W,
     height: MENU_H,
@@ -1085,7 +911,6 @@ function openMenuWindow() {
       sandbox: false
     }
   });
-
   menuWin.setAlwaysOnTop(true, 'screen-saver');
   menuWin.loadFile(path.join(__dirname, 'renderer', 'menu.html'));
   menuWin.once('ready-to-show', () => {
@@ -1099,7 +924,6 @@ function openMenuWindow() {
   });
   menuWin.on('closed', () => { menuWin = null; });
 }
-
 ipcMain.on('open-menu', () => openMenuWindow());
 ipcMain.on('close-menu', () => closeMenuWindow());
 ipcMain.on('menu-action', (_e, act) => {
@@ -1141,32 +965,27 @@ function clampToWorkArea(x, y) {
   );
   return [Math.round(nx), Math.round(ny)];
 }
-
 ipcMain.on('drag-begin', () => {
   if (!win) return;
   const [x, y] = win.getPosition();
   const c = screen.getCursorScreenPoint();
   dragGrab = { x: c.x - x, y: c.y - y };
 });
-
 ipcMain.on('drag-move', () => {
   if (!win || !dragGrab) return;
   const c = screen.getCursorScreenPoint();
   const [nx, ny] = clampToWorkArea(c.x - dragGrab.x, c.y - dragGrab.y);
   win.setPosition(nx, ny);
 });
-
 ipcMain.on('drag-end', () => {
   dragGrab = null;
 });
-
 ipcMain.on('move-to', (_e, x, y) => {
   if (!win) return;
   const [cx, cy] = win.getPosition();
   const [nx, ny] = clampToWorkArea(cx + x, cy + y);
   win.setPosition(nx, ny);
 });
-
 ipcMain.on('snap-corner', () => {
   if (!win) return;
   const { workArea } = screen.getPrimaryDisplay();
@@ -1185,7 +1004,6 @@ ipcMain.on('toggle-top', () => {
   win.setAlwaysOnTop(topMost, topMost ? 'screen-saver' : 'normal');
   win.webContents.send('toast', topMost ? '已置顶' : '取消置顶');
 });
-
 ipcMain.on('open-hermes-dir', () => shell.openPath(HERMES_DIR));
 ipcMain.on('open-chat', () => showChat());
 ipcMain.on('set-status', (_e, status) => {
@@ -1194,7 +1012,6 @@ ipcMain.on('set-status', (_e, status) => {
 });
 ipcMain.on('hide-chat', () => chatWin && chatWin.hide());
 ipcMain.on('close-chat', () => chatWin && chatWin.close());
-
 ipcMain.handle('pet-state-get', () => petState);
 ipcMain.handle('utterance-format', (_e, text) => prepareUtterance(text));
 ipcMain.handle('hermes-snapshot-get', async () => {
@@ -1306,9 +1123,7 @@ ipcMain.on('toggle-autostart', () => {
   });
   win.webContents.send('toast', !on ? '下次开机会自己出来' : '已取消开机自启');
 });
-
 ipcMain.on('quit', () => app.quit());
-
 ipcMain.on('hide-pet', () => win && win.hide());
 
 // ---------- 启动 ----------
@@ -1347,7 +1162,6 @@ if (!gotLock) {
         return new Response('not found', { status: 404 });
       }
     });
-
     fs.mkdirSync(HERMES_DIR, { recursive: true });
     petState = loadPetState();
     // 首次启动若还没有密钥，直接从 Hermes 的 .env 里搬过来，省得手填
@@ -1363,12 +1177,10 @@ if (!gotLock) {
     if (process.env.PET_LIVE2D_TEST === '1') createLive2dTestWindow();
   });
 }
-
 app.on('window-all-closed', (e) => {
   // 桌宠不退，留在托盘
   e.preventDefault && e.preventDefault();
 });
-
 app.on('activate', () => showPet());
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
