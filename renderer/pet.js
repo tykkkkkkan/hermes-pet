@@ -12,6 +12,7 @@ const stateText = document.getElementById('state-text');
 const statePanel = document.getElementById('status-panel');
 const panelOnline = document.getElementById('panel-online');
 const panelEmotion = document.getElementById('panel-emotion');
+const panelTotal = document.getElementById('panel-total');
 const panelRunning = document.getElementById('panel-running');
 const panelReview = document.getElementById('panel-review');
 const panelBlocked = document.getElementById('panel-blocked');
@@ -41,22 +42,24 @@ function paintTaskLists(tasks) {
   if (json === lastTasksJson) return;
   lastTasksJson = json;
   const groups = [
-    ['running', '执行中'],
-    ['blocked', '受阻'],
     ['review', '待验收'],
+    ['blocked', '受阻'],
+    ['running', '执行中'],
     ['queued', '排队']
   ];
   const html = groups.map(([key, label]) => {
-    const list = Array.isArray(tasks?.[key]) ? tasks[key] : [];
-    if (!list.length) return '';
-    const items = list.map((task) => {
+    const group = tasks?.[key] || {};
+    const items = Array.isArray(group.items) ? group.items : [];
+    const total = Math.max(0, Number(group.total) || 0);
+    if (!total) return '';
+    const rows = items.map((task) => {
       const who = task.assignee ? `<span class="t-who">${escapeHtml(task.assignee)}</span>` : '';
       return `<li><span>${escapeHtml(task.title)}</span>${who}</li>`;
     }).join('');
-    return `<div class="t-group"><div class="t-head">${label} <b>${list.length}</b></div><ul>${items}</ul></div>`;
+    const more = total > items.length ? `<li class="t-more">还有 ${total - items.length} 条没显示</li>` : '';
+    return `<div class="t-group"><div class="t-head">${label} <b>${total}</b></div><ul>${rows}${more}</ul></div>`;
   }).join('');
-  const total = Math.max(0, Number(tasks?.total) || 0);
-  panelTasks.innerHTML = `${html || '<div class="t-empty">看板是空的，暂时没活派给我</div>'}<div class="t-total">总计 ${total} 条</div>`;
+  panelTasks.innerHTML = html || '<div class="t-empty">看板是空的，暂时没活派给我</div>';
 }
 
 let currentSrc = petBody.getAttribute('src');
@@ -313,6 +316,7 @@ function paintState(state) {
   window.petLive2d?.setState(bodyState);
   panelOnline.textContent = s.hermesOnline ? `在线 · ${s.port ? `端口 ${s.port}` : '服务正常'}` : '离线（等待 Hermes 服务）';
   panelEmotion.textContent = `${s.emotion || '平静'} · ${s.address || '好大爹'}`;
+  panelTotal.textContent = `看板共 ${Math.max(0, Number(s.tasks?.total) || 0)} 条`;
   panelRunning.textContent = s.runningCount || 0;
   panelReview.textContent = s.queue?.review || 0;
   panelBlocked.textContent = s.queue?.blocked || 0;
@@ -335,6 +339,9 @@ statePill.addEventListener('click', (e) => {
   e.stopPropagation();
   statePanel.classList.toggle('hidden');
   window.pet.setIgnore(false);
+});
+statePanel.addEventListener('scroll', () => {
+  statePanel.classList.toggle('scrolled', statePanel.scrollTop > 0);
 });
 window.addEventListener('mousedown', (e) => {
   if (!statePanel.contains(e.target) && e.target !== statePill) statePanel.classList.add('hidden');

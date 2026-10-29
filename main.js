@@ -37,8 +37,14 @@ let bridgeServer = null;
 let bridgeToken = '';
 let persona = readJson(PERSONA_FILE, {});
 const pickTouchLine = createTouchPicker(persona);
-const PANEL_MAX_PER_GROUP = 5;
-const emptyTaskPanel = () => ({ running: [], blocked: [], review: [], queued: [], total: 0 });
+const PANEL_MAX_PER_GROUP = 3;
+const emptyTaskPanel = () => ({
+  running: { items: [], total: 0 },
+  blocked: { items: [], total: 0 },
+  review: { items: [], total: 0 },
+  queued: { items: [], total: 0 },
+  total: 0
+});
 let petState = {
   status: 'idle',
   statusText: '待命',
@@ -137,14 +143,18 @@ const slimTask = (task) => ({
   status: task?.status || ''
 });
 const slimGroup = (list) => (Array.isArray(list) ? list.slice(0, PANEL_MAX_PER_GROUP).map(slimTask) : []);
+const packTaskGroup = (list) => ({
+  items: slimGroup(list),
+  total: Array.isArray(list) ? list.length : 0
+});
 function buildTaskPanel(next) {
   const allTasks = Array.isArray(next?.tasks) ? next.tasks : [];
   const queued = allTasks.filter((task) => ['todo', 'ready', 'scheduled'].includes(String(task?.status || '').toLowerCase()));
   return {
-    running: slimGroup(next?.running),
-    blocked: slimGroup(next?.blocked),
-    review: slimGroup(next?.review),
-    queued: slimGroup(queued),
+    running: packTaskGroup(next?.running),
+    blocked: packTaskGroup(next?.blocked),
+    review: packTaskGroup(next?.review),
+    queued: packTaskGroup(queued),
     total: allTasks.length
   };
 }
