@@ -19,6 +19,7 @@ const createSettingsStore = require('./settings-store');
 const createPetSpeech = require('./pet-speech');
 const createPetState = require('./pet-state');
 const createBridgeServer = require('./bridge-server');
+const createHermesPoller = require('./hermes-poller');
 const WIN_W = 340;
 const WIN_H = 500;
 const HERMES_DIR = path.join(process.env.LOCALAPPDATA || '', 'hermes');
@@ -28,10 +29,6 @@ let tray = null;
 let chatWin = null;
 let topMost = true;
 let chatBusy = false;
-let hermesTimer = null;
-let hermesPollInFlight = false;
-let previousHermes = null;
-let successUntil = 0;
 let petState = null;
 const settingsStore = createSettingsStore({
   dataDir: () => app.getPath('userData'),
@@ -65,19 +62,7 @@ const loadPetState = petStateStore.load;
 const savePetState = petStateStore.save;
 const adjustPetState = (...args) => (petStateStore.adjust(...args), pushPetState());
 
-function statusFromSnapshot(snapshot) {
-  return petRuntime.deriveStatus(snapshot, { now: Date.now(), successUntil });
-}
-
 const taskTitle = petStateStore.taskTitle;
-
-function reviewTransitions(previous, next) {
-  const before = new Map((previous?.tasks || []).filter((task) => task?.id != null)
-    .map((task) => [String(task.id), task]));
-  return (next?.tasks || []).filter((task) => task?.id != null
-    && String(task.status || '').toLowerCase() === 'review'
-    && String(before.get(String(task.id))?.status || '').toLowerCase() !== 'review');
-}
 
 function announce(text, options = {}) {
   if (!text) return;
@@ -161,79 +146,15 @@ const bridgeService = createBridgeServer({
 const bridgeState = bridgeService.bridgeState;
 const startBridgeServer = bridgeService.start;
 const stopBridgeServer = bridgeService.stop;
-
-function applyHermesSnapshot(snapshot) {
-  const next = petRuntime.normalizeSnapshot(snapshot);
-  const transitions = petRuntime.taskTransitions(previousHermes, next);
-  const reviews = reviewTransitions(previousHermes, next);
-  if (previousHermes) {
-    if (transitions.some(({ task }) => task.status === 'done')) successUntil = Date.now() + 4500;
-    if (transitions.some(({ task }) => petRuntime.isFailureStatus(task.status))) successUntil = 0;
-  }
-  const stateChange = statusFromSnapshot(next);
-  const statusChanged = !previousHermes || stateChange.status !== petState.status;
-  refreshEmotionClock();
-  petStateStore.set({
-    ...stateChange,
-    hermesOnline: !!next.online,
-    gatewayBusy: !!next.gatewayBusy,
-    hermesText: next.online ? `在线 · ${next.running.length} 个在跑` : 'Hermes 离线',
-    runningCount: next.running.length,
-    queue: next.counts,
-    currentTask: next.currentTask ? {
-      id: next.currentTask.id,
-      title: taskTitle(next.currentTask),
-      assignee: next.currentTask.assignee || ''
-    } : null,
-    agents: next.agents,
-    tasks: petStateStore.buildTaskPanel(next)
-  });
-  if (statusChanged && (next.running || []).length) applyEmotionEvent('working');
-  pushPetState();
-  if (previousHermes) {
-    for (const { task } of transitions) {
-      if (task.status === 'done') {
-        applyEmotionEvent('success');
-        petState.mood = Math.min(100, petState.mood + 2);
-        announce(`{address}，${taskTitle(task)} 完成了，验收一下`, { notify: true, kind: 'success', taskResult: true });
-      } else if (petRuntime.isFailureStatus(task.status)) {
-        applyEmotionEvent('failure');
-        petState.mood = Math.max(0, petState.mood - 1);
-        const resultWord = task.status === 'blocked' ? '受阻' : '失败';
-        announce(`{address}，${taskTitle(task)} ${resultWord}了。先别急，我把问题盯住`, { notify: true, kind: 'error', taskResult: true });
-      }
-    }
-    for (const task of reviews) {
-      applyEmotionEvent('success');
-      petState.mood = Math.min(100, petState.mood + 1);
-      announce(`{address}，${taskTitle(task)} 做完了，等你验收`, { notify: true, kind: 'success', taskResult: true });
-    }
-    if (previousHermes.online && !next.online) {
-      announce('{address}，Hermes 服务断了，我先安静等它回来', { notify: true, kind: 'error' });
-    } else if (!previousHermes.online && next.online) {
-      announce('{address}，Hermes 回来了，现在在线', { notify: false, kind: 'success' });
-    }
-  }
-  previousHermes = next;
-  savePetState();
-}
-async function pollHermes() {
-  if (hermesPollInFlight) return;
-  hermesPollInFlight = true;
-  try {
-    applyHermesSnapshot(await hermesBridge.snapshot());
-  } catch {
-    applyHermesSnapshot({ online: false });
-  } finally {
-    hermesPollInFlight = false;
-  }
-}
-
-function startHermesPolling() {
-  clearInterval(hermesTimer);
-  pollHermes();
-  hermesTimer = setInterval(pollHermes, 3000);
-}
+const hermesPoller = createHermesPoller({
+  bridge: hermesBridge,
+  state: petStateStore,
+  announce,
+  pushState: pushPetState,
+  taskTitle
+});
+const statusFromSnapshot = hermesPoller.statusFromSnapshot;
+const startHermesPolling = hermesPoller.start;
 
 function recordSessionMessage(sessionId, role, content, at = Date.now()) {
   return petMemory.record(path.join(dataDir(), 'memory'), sessionId, role, content, at);
@@ -827,7 +748,7 @@ ipcMain.handle('session-chat', async (_e, text) => {
     adjustPetState(1, 1);
     setPetState('success', '回复完成');
     setTimeout(() => {
-    if (!petState.hermesOnline || !petState.runningCount) setPetState(statusFromSnapshot(previousHermes || { online: false }).status);
+    if (!petState.hermesOnline || !petState.runningCount) setPetState(statusFromSnapshot(hermesPoller.getPrevious() || { online: false }).status);
     }, 1200);
     return { ok: true, answer: result.answer, sessionId: result.sessionId };
   } catch (error) {
