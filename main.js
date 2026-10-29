@@ -19,6 +19,7 @@ const petRuntime = require('./pet-runtime');
 const { createTouchPicker } = require('./pet-interactions');
 const createSettingsStore = require('./settings-store');
 const createPetSpeech = require('./pet-speech');
+const createPetState = require('./pet-state');
 const WIN_W = 340;
 const WIN_H = 500;
 const HERMES_DIR = path.join(process.env.LOCALAPPDATA || '', 'hermes');
@@ -34,29 +35,7 @@ let previousHermes = null;
 let successUntil = 0;
 let bridgeServer = null;
 let bridgeToken = '';
-const PANEL_MAX_PER_GROUP = 3;
-const emptyTaskPanel = () => ({
-  running: { items: [], total: 0 },
-  blocked: { items: [], total: 0 },
-  review: { items: [], total: 0 },
-  queued: { items: [], total: 0 },
-  total: 0
-});
-let petState = {
-  status: 'idle',
-  statusText: '待命',
-  hermesOnline: false,
-  hermesText: 'Hermes 离线',
-  runningCount: 0,
-  queue: { todo: 0, ready: 0, scheduled: 0, running: 0, blocked: 0, review: 0, done: 0 },
-  currentTask: null,
-  agents: [],
-  tasks: emptyTaskPanel(),
-  emotion: '平静',
-  address: '好大爹',
-  affection: 50,
-  mood: 72
-};
+let petState = null;
 const settingsStore = createSettingsStore({
   dataDir: () => app.getPath('userData'),
   safeStorage,
@@ -76,69 +55,24 @@ const publicSettings = settingsStore.publicView;
 const persona = readJson(PERSONA_FILE, {});
 const pickTouchLine = createTouchPicker(persona);
 const speech = createPetSpeech();
-
-function applyEmotionEvent(event) {
-  petState = petEmotion.applyEvent(petState, event);
-}
-
-function refreshEmotionClock(now = Date.now()) {
-  petState = petEmotion.decay(petState, now);
-  const lastInteraction = Number(petState.lastInteraction) || now;
-  const lastIgnoredAt = Number(petState.lastIgnoredAt) || 0;
-  if (now - lastInteraction >= 6 * 3600000 && now - lastIgnoredAt >= 6 * 3600000) {
-    applyEmotionEvent('ignored');
-    petState.lastIgnoredAt = now;
-  }
-}
-
-function trackUserEmotion(text) {
-  const message = String(text || '');
-  petState.lastInteraction = Date.now();
-  petState.lastIgnoredAt = 0;
-  if (/谢谢|辛苦|做得好|真棒|厉害|夸你/.test(message)) applyEmotionEvent('praised');
-  if (/催|快点|赶紧|怎么还没|进度呢/.test(message)) {
-    const now = Date.now();
-    const recentNagCount = Number(petState.recentNagCount) || 0;
-    const recentNagAt = Number(petState.recentNagAt) || 0;
-    petState.recentNagCount = now - recentNagAt <= 10 * 60000 ? recentNagCount + 1 : 1;
-    petState.recentNagAt = now;
-    if (petState.recentNagCount >= 3) {
-      applyEmotionEvent('nagged');
-      petState.recentNagCount = 0;
-    }
-  }
-}
+const petStateStore = createPetState({
+  emotion: petEmotion,
+  settingsStore,
+  onChange: (next) => { petState = next; }
+});
+petState = petStateStore.get();
+const applyEmotionEvent = petStateStore.applyEmotion;
+const refreshEmotionClock = petStateStore.decay;
+const trackUserEmotion = petStateStore.trackUserText;
+const loadPetState = petStateStore.load;
+const savePetState = petStateStore.save;
+const adjustPetState = (...args) => (petStateStore.adjust(...args), pushPetState());
 
 function statusFromSnapshot(snapshot) {
   return petRuntime.deriveStatus(snapshot, { now: Date.now(), successUntil });
 }
 
-function taskTitle(task) {
-  return String(task?.title || task?.name || `任务 #${task?.id ?? '?'}`).trim();
-}
-const slimTask = (task) => ({
-  id: task?.id ?? '',
-  title: taskTitle(task),
-  assignee: task?.assignee || '',
-  status: task?.status || ''
-});
-const slimGroup = (list) => (Array.isArray(list) ? list.slice(0, PANEL_MAX_PER_GROUP).map(slimTask) : []);
-const packTaskGroup = (list) => ({
-  items: slimGroup(list),
-  total: Array.isArray(list) ? list.length : 0
-});
-
-function buildTaskPanel(next) {
-  const allTasks = Array.isArray(next?.tasks) ? next.tasks : [];
-  const queued = allTasks.filter((task) => ['todo', 'ready', 'scheduled'].includes(String(task?.status || '').toLowerCase()));
-  return {
-    running: packTaskGroup(next?.running),
-    blocked: packTaskGroup(next?.blocked),
-    review: packTaskGroup(next?.review),
-    queued: packTaskGroup(queued),
-    total: allTasks.length
-  };
-}
+const taskTitle = petStateStore.taskTitle;
 
 function reviewTransitions(previous, next) {
   const before = new Map((previous?.tasks || []).filter((task) => task?.id != null)
@@ -241,9 +175,11 @@ function bridgeState() {
 function interactPet(zone) {
   const line = pickTouchLine(String(zone || 'body'), petState.emotion, petState.mood);
   applyEmotionEvent('touched');
-  petState.lastInteraction = Date.now();
-  petState.mood = Math.min(100, petState.mood + 1);
-  petState.affection = Math.min(100, petState.affection + 1);
+  petStateStore.set({
+    lastInteraction: Date.now(),
+    mood: Math.min(100, petState.mood + 1),
+    affection: Math.min(100, petState.affection + 1)
+  });
   savePetState();
   pushPetState();
   announce(line, { kind: 'interaction', userInitiated: true });
@@ -339,8 +275,7 @@ function applyHermesSnapshot(snapshot) {
   const stateChange = statusFromSnapshot(next);
   const statusChanged = !previousHermes || stateChange.status !== petState.status;
   refreshEmotionClock();
-  petState = {
-    ...petState,
+  petStateStore.set({
     ...stateChange,
     hermesOnline: !!next.online,
     gatewayBusy: !!next.gatewayBusy,
@@ -353,8 +288,8 @@ function applyHermesSnapshot(snapshot) {
       assignee: next.currentTask.assignee || ''
     } : null,
     agents: next.agents,
-    tasks: buildTaskPanel(next)
-  };
+    tasks: petStateStore.buildTaskPanel(next)
+  });
   if (statusChanged && (next.running || []).length) applyEmotionEvent('working');
   pushPetState();
   if (previousHermes) {
@@ -455,63 +390,17 @@ function appendHistory(role, content) {
   writeJson(historyFile(), rows.slice(-200));
 }
 
-function loadPetState() {
-  const saved = readJson(stateFile(), {});
-  const lastSeen = Number(saved.lastSeen) || Date.now();
-  const hoursAway = Math.max(0, (Date.now() - lastSeen) / 3600000);
-  return {
-    status: 'idle',
-    statusText: '待命',
-    emotion: saved.emotion || '平静',
-    emotionScores: saved.emotionScores || {},
-    addressHistory: Array.isArray(saved.addressHistory) ? saved.addressHistory.slice(-2) : [],
-    lastEmotionDecay: Number(saved.lastEmotionDecay) || lastSeen,
-    lastInteraction: Number(saved.lastInteraction) || lastSeen,
-    lastIgnoredAt: Number(saved.lastIgnoredAt) || 0,
-    address: saved.address || '好大爹',
-    hermesOnline: false,
-    hermesText: 'Hermes 离线',
-    runningCount: 0,
-    queue: { todo: 0, ready: 0, scheduled: 0, running: 0, blocked: 0, review: 0, done: 0 },
-    currentTask: null,
-    agents: [],
-    tasks: emptyTaskPanel(),
-    affection: Math.max(0, Math.min(100, Number(saved.affection) || 50)),
-    mood: Math.max(0, Math.min(100, (Number(saved.mood) || 72) - Math.min(24, Math.floor(hoursAway * 1.5))))
-  };
-}
-
-function savePetState() {
-  refreshEmotionClock();
-  writeJson(stateFile(), {
-    affection: petState.affection,
-    mood: petState.mood,
-    emotion: petState.emotion,
-    address: petState.address,
-    emotionScores: petState.emotionScores,
-    addressHistory: petState.addressHistory,
-    lastEmotionDecay: petState.lastEmotionDecay,
-    lastInteraction: petState.lastInteraction,
-    lastIgnoredAt: petState.lastIgnoredAt,
-    lastSeen: Date.now()
-  });
-}
-
 function pushPetState() {
   if (win && !win.isDestroyed()) win.webContents.send('pet-state', petState);
   if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.send('pet-state', petState);
 }
 
 function setPetState(status, statusText) {
-  petState.status = status || 'idle';
-  petState.statusText = statusText || ({ idle: '待命', thinking: '思考中', working: '执行中', success: '完成', error: '遇到问题', sleep: '安静中' }[petState.status] || '待命');
-  pushPetState();
-}
-
-function adjustPetState(affection = 0, mood = 0) {
-  petState.affection = Math.max(0, Math.min(100, Math.round(petState.affection + affection)));
-  petState.mood = Math.max(0, Math.min(100, Math.round(petState.mood + mood)));
-  savePetState();
+  const nextStatus = status || 'idle';
+  petStateStore.set({
+    status: nextStatus,
+    statusText: statusText || ({ idle: '待命', thinking: '思考中', working: '执行中', success: '完成', error: '遇到问题', sleep: '安静中' }[nextStatus] || '待命')
+  });
   pushPetState();
 }
 
