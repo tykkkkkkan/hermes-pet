@@ -98,6 +98,17 @@
     "portable": {
       "artifactName": "hermes-pet-${version}-portable.${ext}"
     },
-    "electronLanguages": ["zh-CN", "en-US"]
+    "electronLanguages": ["zh-CN", "en-US"],
+    "extraResources": [
+      {
+        "from": ".tmp/asr-runtime",
+        "to": "asr-runtime",
+        "filter": [
+          "sherpa-onnx-asr.js",
+          "sherpa-onnx-vad.js",
+          "sherpa-onnx-wasm-main-vad-asr.js"
+        ]
+      }
+    ]
   }
 }

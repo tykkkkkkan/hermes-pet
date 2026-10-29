@@ -1,6 +1,8 @@
 const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, shell, globalShortcut, safeStorage, Notification, protocol, net, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
+const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 // Live2D 模型要用 fetch 读取 .moc3 / .model3.json，file:// 下会被 CORS 拦。
 // 这里注册一个只读的本地协议，把项目目录映射成 petasset://app/<相对路径>。
@@ -23,6 +25,14 @@ const createHermesPoller = require('./hermes-poller');
 const WIN_W = 340;
 const WIN_H = 500;
 const HERMES_DIR = path.join(process.env.LOCALAPPDATA || '', 'hermes');
+const ASR_MODEL_DIR = path.join(HERMES_DIR, 'asr-models');
+const ASR_ARCHIVE_URL = 'https://api.github.com/repos/k2-fsa/sherpa-onnx/releases/assets/315937571';
+const ASR_ARCHIVE_SHA256 = '911ae25d130d748572b604f28e126990674fb4d30925105033ff93d8569f682e';
+const ASR_MODEL_FILES = [
+  'sherpa-onnx-wasm-main-vad-asr.data',
+  'sherpa-onnx-wasm-main-vad-asr.wasm'
+];
+let asrModelPromise = null;
 const logger = require('./logger')({ logDir: path.join(HERMES_DIR, 'logs') });
 const isFrameworkNoise = (args) => {
   const first = String(args[0] || '');
@@ -31,6 +41,68 @@ const isFrameworkNoise = (args) => {
 console.log = (...args) => { if (!isFrameworkNoise(args)) logger.info(...args); };
 console.error = (...args) => { if (!isFrameworkNoise(args)) logger.error(...args); };
 console.warn = (...args) => { if (!isFrameworkNoise(args)) logger.warn(...args); };
+
+function runTarExtract(archive, destination) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('tar.exe', ['-xjf', archive, '-C', destination], {
+      windowsHide: true,
+      stdio: ['ignore', 'ignore', 'pipe']
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    child.once('error', reject);
+    child.once('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`ASR 模型解包失败（${code}）：${stderr.trim()}`));
+    });
+  });
+}
+
+async function downloadAsrModel() {
+  await fs.promises.mkdir(ASR_MODEL_DIR, { recursive: true });
+  const archive = path.join(ASR_MODEL_DIR, `.sherpa-onnx-${process.pid}.tar.bz2`);
+  const staging = path.join(ASR_MODEL_DIR, `.extract-${process.pid}`);
+  try {
+    console.log('[hermes-pet] 下载本地中文语音模型');
+    const response = await net.fetch(ASR_ARCHIVE_URL, {
+      headers: { Accept: 'application/octet-stream', 'User-Agent': 'hermes-pet' }
+    });
+    if (!response.ok) throw new Error(`模型下载返回 ${response.status}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+    if (digest !== ASR_ARCHIVE_SHA256) throw new Error('模型下载校验失败');
+    await fs.promises.writeFile(archive, bytes);
+    await fs.promises.rm(staging, { recursive: true, force: true });
+    await fs.promises.mkdir(staging, { recursive: true });
+    await runTarExtract(archive, staging);
+    const root = path.join(staging, 'sherpa-onnx-wasm-simd-1.12.15-vad-asr-zh-zipformer_wenetspeech');
+    for (const file of ASR_MODEL_FILES) {
+      await fs.promises.copyFile(path.join(root, file), path.join(ASR_MODEL_DIR, file));
+    }
+    await fs.promises.writeFile(path.join(ASR_MODEL_DIR, 'VERSION'), 'sherpa-onnx-1.12.15\n');
+    console.log('[hermes-pet] 本地中文语音模型已就绪');
+    return { ok: true, dir: ASR_MODEL_DIR };
+  } finally {
+    await fs.promises.rm(archive, { force: true }).catch(() => {});
+    await fs.promises.rm(staging, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+function ensureAsrModel() {
+  if (!asrModelPromise) {
+    asrModelPromise = (async () => {
+      const complete = (await Promise.all(
+        ASR_MODEL_FILES.map((file) => fs.promises.access(path.join(ASR_MODEL_DIR, file)).then(() => true).catch(() => false))
+      )).every(Boolean);
+      return complete ? { ok: true, dir: ASR_MODEL_DIR, cached: true } : downloadAsrModel();
+    })().catch((error) => {
+      asrModelPromise = null;
+      logger.error('[hermes-pet] 本地中文语音模型不可用', error);
+      throw error;
+    });
+  }
+  return asrModelPromise;
+}
 const PERSONA_FILE = path.join(__dirname, 'persona.json');
 let win = null;
 let tray = null;
@@ -658,6 +730,7 @@ ipcMain.handle('import-key', () => {
   const r = importKeyFromHermes();
   return { ...r, settings: publicSettings() };
 });
+ipcMain.handle('asr-model-ensure', () => ensureAsrModel());
 ipcMain.handle('history-get', () => loadHistory());
 ipcMain.handle('chat-send', async (_e, text) => {
   const message = String(text || '').trim().slice(0, 4000);
@@ -707,9 +780,17 @@ if (!gotLock) {
     // 只读地把项目目录映射成 petasset://app/<相对路径>，供 Live2D 用 fetch 读取模型
     // 直接读磁盘、不走 net.fetch：走网络栈会命中 Chromium 缓存，替换素材后仍读到旧文件
     protocol.handle('petasset', async (request) => {
-      const { pathname } = new URL(request.url);
+      const { hostname, pathname } = new URL(request.url);
       const rel = decodeURIComponent(pathname).replace(/^\/+/, '');
-      const base = path.resolve(__dirname);
+      const roots = {
+        app: __dirname,
+        'asr-runtime': app.isPackaged
+          ? path.join(process.resourcesPath, 'asr-runtime')
+          : path.join(__dirname, '.tmp', 'asr-runtime'),
+        'asr-model': ASR_MODEL_DIR
+      };
+      const base = path.resolve(roots[hostname] || '');
+      if (!roots[hostname]) return new Response('forbidden', { status: 403 });
       const target = path.resolve(base, rel);
       const relative = path.relative(base, target);
       if (relative.startsWith('..') || path.isAbsolute(relative)) {
@@ -721,7 +802,11 @@ if (!gotLock) {
         '.css': 'text/css; charset=utf-8',
         '.json': 'application/json; charset=utf-8',
         '.png': 'image/png',
-        '.moc3': 'application/octet-stream'
+        '.moc3': 'application/octet-stream',
+        '.wasm': 'application/wasm',
+        '.onnx': 'application/octet-stream',
+        '.data': 'application/octet-stream',
+        '.txt': 'text/plain; charset=utf-8'
       };
       try {
         const data = await fs.promises.readFile(target);
@@ -736,6 +821,7 @@ if (!gotLock) {
       }
     });
     fs.mkdirSync(HERMES_DIR, { recursive: true });
+    ensureAsrModel().catch(() => {});
     petState = loadPetState();
     // 首次启动若还没有密钥，直接从 Hermes 的 .env 里搬过来，省得手填
     if (!loadSettings().apiKeyCipher) {

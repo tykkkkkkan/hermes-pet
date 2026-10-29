@@ -30,5 +30,8 @@ renderer/vendor/live2dcubismcore*.js
 assets/live2d/
 live2d-test.png
 
+# 本地 ASR 运行时和模型由构建/首次启动准备，不进仓库
+assets/asr/
+
 # 截图验收用的假数据页面（node tools/make-mock-chat.js 生成）
 renderer/_mock-chat.html

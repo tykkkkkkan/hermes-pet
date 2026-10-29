@@ -397,7 +397,15 @@ async function submitTask() {
 }
 
 /* --------------------------------- 语音输入 -------------------------------- */
-function setupVoice() {
+async function setupVoice() {
+  if (window.petLocalAsr?.ready) {
+    try {
+      await window.petLocalAsr.ready;
+      window.pet.log('info', '[asr] local engine ready');
+    } catch (error) {
+      window.pet.log('warn', '[asr] local engine unavailable', error.message || 'unknown');
+    }
+  }
   const Engine = window.petLocalAsr?.Recognition || window.SpeechRecognition || window.webkitSpeechRecognition;
   const button = $('voice-btn');
   if (!Engine) {
@@ -687,7 +695,7 @@ async function init() {
   paintState(await window.pet.getState());
   growInput();
   $('input').focus();
-  setupVoice();
+  await setupVoice();
 }
 
 init().catch(async (error) => addMessage('assistant', await addressed(error.message || '初始化失败。'), Date.now()));

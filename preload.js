@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld('pet', {
   saveSettings: (input) => ipcRenderer.invoke('settings-save', input),
   previewAppearance: (input) => ipcRenderer.send('appearance-preview', input),
   importKey: () => ipcRenderer.invoke('import-key'),
+  ensureAsrModel: () => ipcRenderer.invoke('asr-model-ensure'),
   onAppearance: (cb) => ipcRenderer.on('appearance', (_e, v) => cb(v)),
   onSettingsChanged: (cb) => ipcRenderer.on('settings-changed', (_e, v) => cb(v)),
   getHistory: () => ipcRenderer.invoke('history-get'),
