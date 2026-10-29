@@ -1,6 +1,7 @@
 const petEl = document.getElementById('pet');
 const petBody = document.getElementById('pet-body');
 const petFace = document.getElementById('pet-face');
+const petInner = document.getElementById('pet-inner-b');
 const stateEl = document.getElementById('pet-state');
 const gestureEl = document.getElementById('pet-gesture');
 const petHitArea = document.getElementById('pet-hit-area');
@@ -206,6 +207,17 @@ function updateIgnore(x, y) {
 }
 
 window.addEventListener('mousemove', (e) => {
+  const now = Date.now();
+  if (lastMouse) {
+    const dt = Math.max(1, now - lastMouse.t);
+    const speed = Math.hypot(e.clientX - lastMouse.x, e.clientY - lastMouse.y) / dt;
+    if (speed > 1.8 && now - lastJoltAt > 1200 && !dragging && !bubbleVisible()
+      && !gestureEl.classList.contains('gesture-active')) {
+      lastJoltAt = now;
+      jolt(e.clientX < window.innerWidth / 2 ? 1 : -1);
+    }
+  }
+  lastMouse = { x: e.clientX, y: e.clientY, t: now };
   lastX = e.clientX;
   lastY = e.clientY;
   const hit = petHitArea.getBoundingClientRect();
@@ -446,15 +458,36 @@ window.addEventListener('keydown', (e) => {
 let lastActionId = '';
 let gestureTimer = null;
 let gestureAnimationHandler = null;
+let gestureSettleTimer = null;
 
 function clearGesture() {
   if (gestureTimer) clearTimeout(gestureTimer);
   gestureTimer = null;
+  if (gestureSettleTimer) clearTimeout(gestureSettleTimer);
+  gestureSettleTimer = null;
   if (gestureAnimationHandler) gestureEl.removeEventListener('animationend', gestureAnimationHandler);
   gestureAnimationHandler = null;
   gestureEl.classList.remove('gesture-active');
+  gestureEl.classList.remove('jolt');
   delete gestureEl.dataset.action;
   gestureEl.style.removeProperty('animation-duration');
+  if (petInner) {
+    petInner.style.transition = '';
+    petInner.style.transform = '';
+  }
+}
+
+let lastMouse = null;
+let lastJoltAt = 0;
+let joltTimer = null;
+function jolt(direction) {
+  if (gestureEl.classList.contains('gesture-active')) return;
+  gestureEl.style.setProperty('--jolt-x', `${direction * 3}px`);
+  gestureEl.classList.remove('jolt');
+  void gestureEl.offsetWidth;
+  gestureEl.classList.add('jolt');
+  clearTimeout(joltTimer);
+  joltTimer = setTimeout(() => gestureEl.classList.remove('jolt'), 160);
 }
 
 function spawnActionEffect(effect) {
@@ -470,8 +503,10 @@ function spawnActionEffect(effect) {
   setTimeout(() => img.remove(), 1500);
 }
 
-function playAction(group) {
-  const action = window.pet.chooseAction?.(group, lastActionId);
+function playAction(group, requestedId = '') {
+  const action = requestedId
+    ? window.pet.actions?.find((item) => item.id === requestedId)
+    : window.pet.chooseAction?.(group, lastActionId);
   if (!action) return;
   clearGesture();
   lastActionId = action.id;
@@ -480,6 +515,15 @@ function playAction(group) {
   gestureEl.style.animationDuration = `${action.duration}ms`;
   void gestureEl.offsetWidth;
   gestureEl.classList.add('gesture-active');
+  if (petInner) {
+    petInner.style.transition = 'none';
+    petInner.style.transform = 'translateY(2px) scale(1.006, .994)';
+    gestureSettleTimer = setTimeout(() => {
+      gestureSettleTimer = null;
+      petInner.style.transition = 'transform 220ms cubic-bezier(.34, 1.56, .64, 1)';
+      petInner.style.transform = 'translateY(0) scale(1, 1)';
+    }, 60);
+  }
   spawnActionEffect(action.effect);
   gestureAnimationHandler = (event) => {
     if (event.target === gestureEl && event.animationName === action.animation) clearGesture();
@@ -488,11 +532,28 @@ function playAction(group) {
   gestureTimer = setTimeout(clearGesture, action.duration + 120);
 }
 
+const IDLE_WEIGHTS = {
+  'double-blink': 5, 'look-away': 5, startle: 4, 'slow-yawn': 2,
+  'heel-tap': 3, 'side-brace': 2, 'jelly-bounce': 1, 'quick-hop': 1,
+  cheer: 1, 'sparkle-cast': 1, 'hat-check': 2, 'soft-lean': 3,
+  'proud-bow': 1, 'cape-flick': 2, stumble: 1
+};
+function pickIdleAction(previousId) {
+  const entries = Object.entries(IDLE_WEIGHTS).filter(([id]) => id !== previousId);
+  const total = entries.reduce((sum, [, weight]) => sum + weight, 0);
+  let roll = Math.random() * total;
+  for (const [id, weight] of entries) {
+    roll -= weight;
+    if (roll <= 0) return id;
+  }
+  return entries[0]?.[0] || '';
+}
+
 function idleLoop() {
-  const wait = 6000 + Math.random() * 7000;
+  const wait = 3500 + Math.random() * 4500;
   setTimeout(() => {
     if (!dragging && !bubbleVisible() && (petEl.dataset.state || 'idle') === 'idle') {
-      playAction('all');
+      playAction('all', pickIdleAction(lastActionId));
     }
     idleLoop();
   }, wait);
