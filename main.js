@@ -18,6 +18,7 @@ const petEmotion = require('./pet-emotion');
 const petRuntime = require('./pet-runtime');
 const { createTouchPicker } = require('./pet-interactions');
 const createSettingsStore = require('./settings-store');
+const createPetSpeech = require('./pet-speech');
 const WIN_W = 340;
 const WIN_H = 500;
 const HERMES_DIR = path.join(process.env.LOCALAPPDATA || '', 'hermes');
@@ -74,6 +75,7 @@ const importKeyFromHermes = settingsStore.importFromHermes;
 const publicSettings = settingsStore.publicView;
 const persona = readJson(PERSONA_FILE, {});
 const pickTouchLine = createTouchPicker(persona);
+const speech = createPetSpeech();
 
 function applyEmotionEvent(event) {
   petState = petEmotion.applyEvent(petState, event);
@@ -152,7 +154,7 @@ function announce(text, options = {}) {
     taskResult: options.taskResult === true,
     userInitiated: options.userInitiated === true
   })) return;
-  text = prepareUtterance(text, { keepAddress: options.kind === 'interaction' });
+  text = formatUtterance(text, { keepAddress: options.kind === 'interaction' });
   // 免打扰只静音、不拦消息；审批/需协助类可按设置例外放行
   const s = publicSettings();
   const muted = inDndWindow() && !(options.critical === true && s.dndAllowApproval);
@@ -173,24 +175,24 @@ function showSystemNotification(text) {
   }
 }
 
-function prepareUtterance(text, options = {}) {
+function formatUtterance(text, options = {}) {
   const pool = Array.isArray(persona?.address?.pool) ? persona.address.pool : [];
   const history = Array.isArray(petState.addressHistory) ? petState.addressHistory : [];
   const previous = petState.address || '好大爹';
-  // 互动回应不随机换称呼：连点几下就换一个名字，听着像好几个人在说话
-  const address = options.keepAddress ? previous : petEmotion.chooseAddress(petState.emotion, previous, pool, history);
+  let address = previous;
+  const result = speech.prepareUtterance(text, {
+    address: previous,
+    pool,
+    history,
+    keepAddress: options.keepAddress,
+    chooseAddress: (current, available, recent) => {
+      address = petEmotion.chooseAddress(petState.emotion, current, available, recent);
+      return address;
+    }
+  });
   if (address !== previous) {
     petState.address = address;
     petState.addressHistory = [...history, address].slice(-2);
-  }
-  let result = String(text || '').replaceAll('{address}', petState.address || '好大爹');
-  const knownAddresses = pool.map((item) => item?.word).filter(Boolean);
-  const prefix = new RegExp(`^(?:${knownAddresses.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})[，,、：:\\s]+`);
-  const startsWithAddress = prefix.test(result);
-  if (address !== previous) {
-    result = startsWithAddress ? result.replace(prefix, `${address}，`) : `${address}，${result}`;
-  } else if (startsWithAddress) {
-    result = result.replace(prefix, `${address}，`);
   }
   return result;
 }
@@ -1013,7 +1015,7 @@ ipcMain.on('set-status', (_e, status) => {
 ipcMain.on('hide-chat', () => chatWin && chatWin.hide());
 ipcMain.on('close-chat', () => chatWin && chatWin.close());
 ipcMain.handle('pet-state-get', () => petState);
-ipcMain.handle('utterance-format', (_e, text) => prepareUtterance(text));
+ipcMain.handle('utterance-format', (_e, text) => formatUtterance(text));
 ipcMain.handle('hermes-snapshot-get', async () => {
   try { return await hermesBridge.snapshot(); } catch { return { online: false }; }
 });
@@ -1022,8 +1024,8 @@ ipcMain.handle('session-history', async () => {
 });
 ipcMain.handle('session-chat', async (_e, text) => {
   const message = String(text || '').trim().slice(0, 4000);
-  if (!message) return { ok: false, error: prepareUtterance('消息不能为空') };
-  if (chatBusy) return { ok: false, error: prepareUtterance('我还在处理上一条消息') };
+  if (!message) return { ok: false, error: formatUtterance('消息不能为空') };
+  if (chatBusy) return { ok: false, error: formatUtterance('我还在处理上一条消息') };
   trackUserEmotion(message);
   chatBusy = true;
   setPetState('thinking', '思考中');
@@ -1055,14 +1057,14 @@ ipcMain.handle('task-create', async (_e, payload) => {
     announce(`{address}，任务「${task.title || payload?.title || '未命名'}」已经放进 Hermes`, { kind: 'success', userInitiated: true });
     return { ok: true, task: result };
   } catch (error) {
-    return { ok: false, error: prepareUtterance(error?.message || '任务创建失败') };
+    return { ok: false, error: formatUtterance(error?.message || '任务创建失败') };
   }
 });
 ipcMain.handle('task-upload', async (_e, taskId, filePath) => {
   try {
     return { ok: true, attachment: await hermesBridge.uploadAttachment(taskId, filePath) };
   } catch (error) {
-    return { ok: false, error: prepareUtterance(error?.message || '附件上传失败') };
+    return { ok: false, error: formatUtterance(error?.message || '附件上传失败') };
   }
 });
 ipcMain.handle('memory-get', async () => ({
@@ -1090,8 +1092,8 @@ ipcMain.handle('import-key', () => {
 ipcMain.handle('history-get', () => loadHistory());
 ipcMain.handle('chat-send', async (_e, text) => {
   const message = String(text || '').trim().slice(0, 4000);
-  if (!message) return { ok: false, error: prepareUtterance('消息不能为空') };
-  if (chatBusy) return { ok: false, error: prepareUtterance('我还在处理上一条消息') };
+  if (!message) return { ok: false, error: formatUtterance('消息不能为空') };
+  if (chatBusy) return { ok: false, error: formatUtterance('我还在处理上一条消息') };
   trackUserEmotion(message);
   chatBusy = true;
   appendHistory('user', message);
@@ -1103,10 +1105,10 @@ ipcMain.handle('chat-send', async (_e, text) => {
     adjustPetState(1, 2);
     setPetState('success');
     setTimeout(() => setPetState('idle'), 1600);
-    return { ok: true, answer: prepareUtterance(answer) };
+    return { ok: true, answer: formatUtterance(answer) };
   } catch (error) {
     setPetState('error', '连接异常');
-    return { ok: false, error: prepareUtterance(error && error.message ? error.message : '模型请求失败') };
+    return { ok: false, error: formatUtterance(error && error.message ? error.message : '模型请求失败') };
   } finally {
     chatBusy = false;
   }
