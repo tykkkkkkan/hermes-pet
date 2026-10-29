@@ -1,5 +1,5 @@
 name: hermes-pet
-version: 0.1.0
+version: 0.2.0
 description: "Hermes 专属桌宠：显示任务状态、播报结果、接受互动并控制本地桌宠窗口。"
 author: "汤伊轲"
 kind: standalone

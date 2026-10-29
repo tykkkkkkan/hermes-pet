@@ -133,7 +133,10 @@ module.exports = function createBridgeServer({
     try { server?.close(); } catch {}
     server = null;
     token = '';
-    try { fs.unlinkSync(bridgeFile()); } catch {}
+    try {
+      const current = JSON.parse(fs.readFileSync(bridgeFile(), 'utf8'));
+      if (Number(current?.pid) === process.pid) fs.unlinkSync(bridgeFile());
+    } catch {}
   }
 
   return { start, stop, bridgeState, bridgeAuthorized, readBridgeBody, getToken: () => token };

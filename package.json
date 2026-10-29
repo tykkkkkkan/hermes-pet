@@ -1,6 +1,6 @@
 {
   "name": "hermes-pet",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Hermes 桌宠：Electron 透明置顶桌宠 + 插件桥接，实时同步 AI Agent 任务状态并主动播报",
   "main": "main.js",
   "scripts": {
@@ -38,12 +38,11 @@
     "electron": "^45.0.0",
     "jpeg-js": "^0.4.4",
     "pngjs": "^7.0.0",
-    "electron-builder": "^26.18.0"
-  },
-  "dependencies": {
+    "electron-builder": "^26.18.0",
     "pixi-live2d-display": "^0.4.0",
     "pixi.js": "^6.5.10"
   },
+  "dependencies": {},
   "build": {
     "appId": "com.tykkkkkkan.hermes-pet",
     "productName": "hermes-pet",
@@ -72,7 +71,10 @@
       "!assets/states/v2/face/**",
       "!assets/states/v2/state/**",
       "!assets/states/v2/state2/**",
-      "!assets/live2d/**"
+      "!assets/live2d/**",
+      "!node_modules/**",
+      "!renderer/live2d-test.html",
+      "!renderer/live2d-test.js"
     ],
     "asar": true,
     "win": {
@@ -94,6 +96,7 @@
     },
     "portable": {
       "artifactName": "hermes-pet-${version}-portable.${ext}"
-    }
+    },
+    "electronLanguages": ["zh-CN", "en-US"]
   }
 }

@@ -241,17 +241,24 @@ async function askModel(text) {
 主人称呼：${settings.userName}。
 你是桌宠，不要声称自己已经执行了电脑操作。当前状态：${petState.statusText}；心情：${petState.mood}/100；好感：${petState.affection}/100。
 回答要短、具体、像熟悉主人的桌面伙伴。除非主人要求，不要输出 Markdown 标题，不要复述问题。`;
-  const response = await fetch(`${base}/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: settings.model,
-      temperature: 0.8,
-      max_tokens: 500,
-      messages: [{ role: 'system', content: system }, ...recent]
-    }),
-    signal: AbortSignal.timeout(90000)
-  });
+  console.log('[pet] 模型请求:', base, '| apiKey length:', apiKey.length);
+  let response;
+  try {
+    response = await net.fetch(`${base}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: settings.model,
+        temperature: 0.8,
+        max_tokens: 500,
+        messages: [{ role: 'system', content: system }, ...recent]
+      }),
+      signal: AbortSignal.timeout(90000)
+    });
+  } catch (error) {
+    console.error('[pet] 模型请求失败:', error.message, '| cause:', error.cause?.code || error.cause?.message || error.cause);
+    throw error;
+  }
   if (!response.ok) {
     const body = await response.text().catch(() => '');
     throw new Error(`模型接口返回 ${response.status}${body ? `：${body.slice(0, 160)}` : ''}`);
