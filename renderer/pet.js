@@ -21,6 +21,7 @@ const panelQueue = document.getElementById('panel-queue');
 const panelTask = document.getElementById('panel-task');
 const panelAgents = document.getElementById('panel-agents');
 const panelTasks = document.getElementById('panel-tasks');
+let latestPetState = {};
 
 let lastAgentsJson = '';
 let lastTasksJson = '';
@@ -337,6 +338,7 @@ let menuOpen = false;
 
 function paintState(state) {
   const s = state || {};
+  latestPetState = s;
   maybeSpeakByState(s);
   stateText.textContent = s.hermesText || s.statusText || 'Hermes 离线';
   statePill.dataset.state = s.status || 'idle';
@@ -471,6 +473,8 @@ function clearGesture() {
   gestureEl.classList.remove('jolt');
   delete gestureEl.dataset.action;
   gestureEl.style.removeProperty('animation-duration');
+  gestureEl.style.removeProperty('animation-name');
+  window.petLive2d?.stopTrack?.();
   if (petInner) {
     petInner.style.transition = '';
     petInner.style.transform = '';
@@ -503,10 +507,10 @@ function spawnActionEffect(effect) {
   setTimeout(() => img.remove(), 1500);
 }
 
-function playAction(group, requestedId = '') {
+function playAction(group, requestedId = '', intent = '') {
   const action = requestedId
     ? window.pet.actions?.find((item) => item.id === requestedId)
-    : window.pet.chooseAction?.(group, lastActionId);
+    : window.pet.chooseAction?.(group, lastActionId, latestPetState.emotion || '', intent);
   if (!action) return;
   clearGesture();
   lastActionId = action.id;
@@ -515,6 +519,11 @@ function playAction(group, requestedId = '') {
   gestureEl.style.animationDuration = `${action.duration}ms`;
   void gestureEl.offsetWidth;
   gestureEl.classList.add('gesture-active');
+  const puppetActive = window.petLive2d?.isReady?.() && action.tracks;
+  if (puppetActive) {
+    // Puppet 接管骨骼时，CSS 仍保留为隐藏静态层的回退和 smoke 可观测标记。
+    window.petLive2d.playTrack(action.tracks, action.duration, Number(latestPetState.energy) || 1);
+  }
   if (petInner) {
     petInner.style.transition = 'none';
     petInner.style.transform = 'translateY(2px) scale(1.006, .994)';

@@ -37,6 +37,29 @@
   let lookX = 0, lookY = 0, lookCX = 0, lookCY = 0;
   let speakUntil = 0;
   const imp = { rot: 0, dy: 0, lean: 0, jump: 0 };
+  let activeTrack = null;
+
+  function sampleTrack(now) {
+    if (!activeTrack) return {};
+    const elapsed = now - activeTrack.start;
+    if (elapsed >= activeTrack.duration) {
+      activeTrack = null;
+      return {};
+    }
+    const t = Math.max(0, Math.min(1, elapsed / activeTrack.duration));
+    const pose = {};
+    for (const [key, points] of Object.entries(activeTrack.tracks || {})) {
+      if (!Array.isArray(points) || !points.length) continue;
+      let left = points[0], right = points[points.length - 1];
+      for (let i = 1; i < points.length; i++) {
+        if (t <= points[i][0]) { right = points[i]; left = points[i - 1]; break; }
+      }
+      const span = Math.max(0.0001, right[0] - left[0]);
+      const local = Math.max(0, Math.min(1, (t - left[0]) / span));
+      pose[key] = lerp(Number(left[1]) || 0, Number(right[1]) || 0, local) * activeTrack.scale;
+    }
+    return pose;
+  }
   let blinkAt = -1, blinkQueue = 0;
 
   /* ---------- 特效层 ----------
@@ -359,6 +382,7 @@
     if (!ready) return;
     const now = performance.now();
     const dt = Math.min(3, (app.ticker.deltaMS || 16.667) / 16.667);
+    const pose = sampleTrack(now);
 
     // 每 30 帧校正一次尺寸：跨屏 DPI 变化、窗口被系统微调时不一定有 resize 事件
     if ((tick.frames = (tick.frames || 0) + 1) % 30 === 0) fit();
@@ -374,7 +398,7 @@
 
     /* 眼睛：以纵向压缩表现眯眼（上下自然露出眼皮），只在接近闭合时才收 alpha。
        直接用 alpha 淡出会让半睁状态的眼睛发灰透明，观感很差。 */
-    const openness = clamp(cur.eye * blinkFactor(now), 0, 1);
+    const openness = clamp(cur.eye * (pose.eye == null ? 1 : pose.eye) * blinkFactor(now), 0, 1);
     eyesSprite.scale.y = 0.12 + 0.88 * openness;
     eyesSprite.alpha = openness < 0.18 ? openness / 0.18 : 1;
     eyesSprite.position.set(
@@ -385,15 +409,15 @@
     /* 头部：状态倾角 + 视线跟随 + 互动冲量。
        再加两笔透视：转头时沿 X 轴压扁（cos 效应）+ 轻微斜切，
        这是"一张平面的脸"变成"有体积的头"最关键的一步。 */
-    const rotDeg = cur.rot + lookCX * 7.2 + imp.rot;
+    const rotDeg = cur.rot + (pose.rot || 0) + lookCX * 7.2 + imp.rot;
     headC.rotation = (rotDeg * Math.PI) / 180;
-    headC.position.set(meta.head.pivotX + lookCX * 3.4, meta.head.pivotY + cur.dy + lookCY * 2 + imp.dy);
+    headC.position.set(meta.head.pivotX + lookCX * 3.4, meta.head.pivotY + cur.dy + (pose.dy || 0) + lookCY * 2 + imp.dy);
     headC.scale.x = 1 - Math.abs(lookCX) * 0.085;
     headC.skew.x = -lookCX * 0.072;
 
     /* 嘴部：说话时按语音节奏开合，节拍不依赖 TTS */
     const speaking = now < speakUntil;
-    let mouthOpen = cur.mouth;
+    let mouthOpen = cur.mouth + (pose.mouth || 0);
     if (speaking) {
       const beat = Math.sin(now / 88) * 0.5 + 0.5;
       mouthOpen = Math.max(mouthOpen, 0.35 + beat * 0.55);
@@ -406,15 +430,16 @@
     /* 呼吸与重心摆动。
        身体横向位移与视线相反（对立式）：头往左看、身子微往右，
        才有"转身"的体积感，而不是整只角色一起平移。 */
-    const breath = Math.sin((now / 570) * cur.breath) * 0.018;
+    const breathStrength = cur.breath * (pose.breath == null ? 1 : pose.breath);
+    const breath = Math.sin((now / 570) * breathStrength) * 0.018;
     breathe.scale.y = 1 + breath;
     breathe.scale.x = 1 - breath * 0.45;
-    breathe.x = Math.sin(now / 1900) * 1.3 + cur.lean * 0.35 - lookCX * 1.5;
+    breathe.x = Math.sin(now / 1900) * 1.3 + (cur.lean + (pose.lean || 0)) * 0.35 - lookCX * 1.5;
     breathe.rotation = -lookCX * 0.012;
 
     /* 投影：起跳时缩小变淡、呼吸时跟着起伏，影子是"离地"的唯一线索 */
     if (shadowSprite) {
-      const lift = Math.max(0, -imp.jump) / 16;
+      const lift = Math.max(0, -(imp.jump + (pose.jump || 0))) / 16;
       shadowSprite.scale.set(
         shadowScale.x * (1 - lift * 0.24) * (1 + breath * 0.6),
         shadowScale.y * (1 - lift * 0.3)
@@ -424,7 +449,7 @@
     }
 
     /* 跳跃冲量 */
-    jumpC.y = imp.jump;
+    jumpC.y = imp.jump + (pose.jump || 0);
 
     imp.rot *= Math.pow(0.9, dt);
     imp.dy *= Math.pow(0.9, dt);
@@ -450,6 +475,12 @@
       lookX = clamp(x, -1, 1);
       lookY = clamp(y, -1, 1);
     },
+    playTrack(tracks, duration, scale = 1) {
+      if (!ready || !tracks || !Number.isFinite(Number(duration)) || Number(duration) <= 0) return false;
+      activeTrack = { tracks, duration: Number(duration), scale: Number(scale) || 1, start: performance.now() };
+      return true;
+    },
+    stopTrack() { activeTrack = null; },
     speak() {
       speakUntil = performance.now() + 1400;
     },
@@ -478,6 +509,7 @@
 
   window.petLive2d = api;
   window.__petPuppetDebug = () => (shadowSprite ? {
+    track: activeTrack ? { duration: activeTrack.duration, elapsed: performance.now() - activeTrack.start } : null,
     shadow: {
       w: shadowSprite.width,
       h: shadowSprite.height,

@@ -180,8 +180,7 @@ body[data-live2d="on"] #pet-state.working,
 body[data-live2d="on"] #pet-state.success,
 body[data-live2d="on"] #pet-state.error,
 body[data-live2d="on"] #pet-state.sleep,
-body[data-live2d="on"] #pet-state.drowsy,
-body[data-live2d="on"] #pet-gesture { animation: none; }
+body[data-live2d="on"] #pet-state.drowsy { animation: none; }
 
 .pet-halo {
   mix-blend-mode: screen;
