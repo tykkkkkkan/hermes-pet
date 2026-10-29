@@ -114,6 +114,41 @@ const LINES = [
   '有活直接说，不用先寒暄。',
   '刚巡过一圈，没什么异常。'
 ];
+const IDLE_LINES = {
+  dawn: ['这个点还没睡', '天亮前最安静，适合干活'],
+  morning: ['早，今天排了不少事', '睡醒了吗'],
+  noon: ['吃过饭没有', '中午了，别硬撑'],
+  afternoon: ['下午容易困，我能陪你说两句', '这半天过得挺快'],
+  evening: ['天黑了，要不要收个尾', '晚上安静，适合清活'],
+  late: ['都这个点了，该睡了', '再熬下去明天崩']
+};
+
+function idleLineForHour(hour = new Date().getHours()) {
+  if (hour < 5) return IDLE_LINES.dawn;
+  if (hour < 11) return IDLE_LINES.morning;
+  if (hour < 14) return IDLE_LINES.noon;
+  if (hour < 18) return IDLE_LINES.afternoon;
+  if (hour < 23) return IDLE_LINES.evening;
+  return IDLE_LINES.late;
+}
+
+let lastSpokenState = null;
+function maybeSpeakByState(s) {
+  if (!lastSpokenState) {
+    lastSpokenState = JSON.parse(JSON.stringify(s || {}));
+    return;
+  }
+  if (dragging || bubbleVisible() || menuOpen || (petEl.dataset.state || 'idle') !== 'idle') return;
+  const prev = lastSpokenState;
+  if ((s.queue?.review || 0) > (prev.queue?.review || 0)) {
+    sayAddressed(`{address}，${s.queue.review}个做完了，等你验收`, 4200);
+  } else if ((s.queue?.blocked || 0) > (prev.queue?.blocked || 0)) {
+    sayAddressed('{address}，有活卡住了，得你去看一眼', 4200);
+  } else if ((prev.queue?.running || 0) > 0 && (s.queue?.running || 0) === 0) {
+    sayAddressed('{address}，都干完了', 3200);
+  }
+  lastSpokenState = JSON.parse(JSON.stringify(s || {}));
+}
 
 let bubbleTimer = null;
 function say(text, ms = 4200, options = {}) {
@@ -290,6 +325,7 @@ let menuOpen = false;
 
 function paintState(state) {
   const s = state || {};
+  maybeSpeakByState(s);
   stateText.textContent = s.hermesText || s.statusText || 'Hermes 离线';
   statePill.dataset.state = s.status || 'idle';
   stateDot.dataset.state = s.status || 'idle';
@@ -594,5 +630,6 @@ setInterval(() => {
   if (Date.now() - lastActivityAt < 60000) return;
   const chance = lineFrequency === 'chatty' ? 0.55 : 0.25;
   if (Math.random() > chance) return;
-  sayAddressed(LINES[Math.floor(Math.random() * LINES.length)], 3600);
+  const pool = idleLineForHour();
+  sayAddressed(pool[Math.floor(Math.random() * pool.length)], 3600);
 }, 90000);

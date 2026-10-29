@@ -323,6 +323,32 @@ function localReply(text) {
   if (/谢谢|辛苦/.test(t)) return '记下了。你把下一步交给我，别自己扛着。';
   return '我已经记住这句话了。现在还没接入模型，我先陪你把想法理顺；配置 DeepSeek 后，我会继续接着聊。';
 }
+
+function buildContext(now = new Date()) {
+  const s = petState || {};
+  const hh = now.getHours();
+  const period = hh < 5 ? '凌晨' : hh < 11 ? '早上' : hh < 14 ? '中午' : hh < 18 ? '下午' : hh < 23 ? '晚上' : '深夜';
+  const lines = [`现在是${period} ${hh}:${String(now.getMinutes()).padStart(2, '0')}。`];
+  if (s.currentTask?.title) {
+    lines.push(`主人手上正在做：「${s.currentTask.title}」${s.currentTask.assignee ? `，由${s.currentTask.assignee}执行` : ''}。`);
+  }
+  const q = s.queue || {};
+  const pending = [];
+  if (q.review) pending.push(`${q.review}个等验收`);
+  if (q.blocked) pending.push(`${q.blocked}个卡住`);
+  if (q.running) pending.push(`${q.running}个在跑`);
+  lines.push(pending.length ? `看板：${pending.join('，')}。` : '看板是空的，现在没有活。');
+  if (Number(s.affection) >= 80) lines.push('你和主人很熟，可以随意一点，偶尔拆个台。');
+  else if (Number(s.affection) <= 30) lines.push('主人最近不怎么理你，稍微收敛一点，别太热络。');
+  const gapMin = Math.max(0, Math.round((now.getTime() - (Number(s.lastInteraction) || now.getTime())) / 60000));
+  if (gapMin > 180) lines.push(`主人已经${Math.round(gapMin / 60)}小时没理你了。`);
+  else if (gapMin > 20) lines.push(`主人${gapMin}分钟没动静了。`);
+  const archive = petMemory.snapshot(path.join(dataDir(), 'memory'), now.getTime());
+  const topics = (archive?.recent || []).flatMap((day) => (day.userTopics || []).slice(-2)).slice(-3);
+  if (topics.length) lines.push(`最近聊过：${topics.join('；')}`);
+  return lines.join('\n').slice(0, 300);
+}
+
 async function askModel(text) {
   const settings = loadSettings();
   const apiKey = getApiKey(settings);
@@ -330,9 +356,12 @@ async function askModel(text) {
   const base = settings.apiBase.replace(/\/+$/, '');
   const recent = loadHistory().slice(-16).map((m) => ({ role: m.role, content: m.content }));
   const system = `${settings.persona}
+${buildContext()}
 主人称呼：${settings.userName}。
-你是桌宠，不要声称自己已经执行了电脑操作。当前状态：${petState.statusText}；心情：${petState.mood}/100；好感：${petState.affection}/100。
-回答要短、具体、像熟悉主人的桌面伙伴。除非主人要求，不要输出 Markdown 标题，不要复述问题。`;
+你是桌宠，不要声称自己已经执行了电脑操作。
+当前状态：${petState.statusText}；心情：${petState.mood}/100；好感：${petState.affection}/100。
+回答控制在30字内，像熟悉主人的桌面伙伴。能一句话说完就不要两句，可以表达偏好和情绪，不要什么都答应。
+不要复述问题，不要说“好的”“明白了”，除非主人要求，不要输出 Markdown 或列条目。`;
   console.log('[pet] 模型请求:', base, '| apiKey length:', apiKey.length);
   let response;
   try {
