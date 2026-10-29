@@ -174,6 +174,7 @@ function fillVoiceOptions(selected) {
   if (!sel) return;
   const voices = (window.speechSynthesis && speechSynthesis.getVoices()) || [];
   const zh = voices.filter((v) => /^zh/i.test(v.lang) || /Chinese|Huihui|Yaoyao|Kangkang|Xiaoxiao/i.test(v.name));
+  window.pet.log('info', '[tts] voices', zh.map((v) => `${v.name} | ${v.lang} | ${v.localService ? '本地' : '在线'}`).join(' ; '));
   const keep = sel.value;
   sel.innerHTML = '<option value="">自动（优先中文女声）</option>';
   for (const v of zh) {
@@ -490,8 +491,19 @@ function readAloud(text) {
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = 'zh-CN';
-  const voice = window.speechSynthesis.getVoices().find((item) => item.lang.toLowerCase().startsWith('zh'));
+  const voices = window.speechSynthesis.getVoices() || [];
+  const zh = voices.filter((item) => /^zh/i.test(item.lang) || /Chinese|Huihui|Yaoyao|Kangkang|Xiaoxiao|Xiaoyi|Yunxia/i.test(item.name));
+  const preferred = ['Xiaoyi', 'Xiaoxiao', 'Yunxia', 'Yaoyao', 'Huihui', 'Kangkang'];
+  const voice = voices.find((item) => item.name === settingsCache.voiceName)
+    || zh.sort((a, b) => {
+      const ai = preferred.findIndex((name) => new RegExp(name, 'i').test(a.name));
+      const bi = preferred.findIndex((name) => new RegExp(name, 'i').test(b.name));
+      return (ai < 0 ? preferred.length : ai) - (bi < 0 ? preferred.length : bi);
+    })[0];
   if (voice) utterance.voice = voice;
+  utterance.rate = Math.max(0.75, Math.min(1.35, (Number(settingsCache.voiceRate) || 100) / 100 * 1.08));
+  utterance.pitch = 1.15;
+  utterance.volume = Math.max(0, Math.min(1, (Number(settingsCache.voiceVolume) || 85) / 100));
   window.speechSynthesis.speak(utterance);
 }
 
@@ -609,6 +621,7 @@ $('voice-test').addEventListener('click', () => {
     u.lang = 'zh-CN';
     u.rate = (Number($('voice-rate').value) || 100) / 100;
     u.volume = Number($('voice-volume').value) / 100;
+    u.pitch = 1.15;
     speechSynthesis.speak(u);
     $('setup-msg').textContent = chosen ? `正在用「${chosen.name}」试听。` : '没找到中文语音包，改用默认音色试听。';
   } catch (e) {

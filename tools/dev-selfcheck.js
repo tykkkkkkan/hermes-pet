@@ -111,15 +111,17 @@ module.exports = function runDevSelfcheck({ win, petState, showChat, openMenuWin
           animState: pet ? getComputedStyle(pet).animationPlayState : 'none', classes: pet ? pet.className : '' };
       })()`;
       const before = await win.webContents.executeJavaScript(probe);
-      console.log('drag[0] before:', JSON.stringify(before), 'pos:', JSON.stringify(win.getPosition()));
-      const step = Number(process.env.PET_DRAG_STEP) || 30;
+      const startBounds = win.getBounds();
+      console.log('drag[0] before:', JSON.stringify(before), 'bounds:', JSON.stringify(startBounds), 'pos:', JSON.stringify(win.getPosition()));
+      await win.webContents.executeJavaScript('window.pet.dragBegin()');
       for (let i = 1; i <= 40; i++) {
-        win.webContents.executeJavaScript(`window.pet.moveTo(${step}, 10)`).catch(() => {});
+        win.webContents.executeJavaScript('window.pet.dragMove()').catch(() => {});
         await new Promise((resolve) => setTimeout(resolve, 55));
-        if (i % 10 === 0) console.log(`drag[${i}] pos:`, JSON.stringify(win.getPosition()));
+        if (i % 10 === 0) console.log(`drag[${i}] bounds:`, JSON.stringify(win.getBounds()), 'pos:', JSON.stringify(win.getPosition()));
       }
+      await win.webContents.executeJavaScript('window.pet.dragEnd()');
       const after = await win.webContents.executeJavaScript(probe);
-      console.log('drag[40] after:', JSON.stringify(after), 'pos:', JSON.stringify(win.getPosition()));
+      console.log('drag[40] after:', JSON.stringify(after), 'bounds:', JSON.stringify(win.getBounds()), 'pos:', JSON.stringify(win.getPosition()));
       savePng(path.join(root, '.tmp', 'drag-shot.png'), await win.capturePage(), 'drag shot');
     }, 3600);
   }

@@ -592,6 +592,7 @@ ipcMain.on('set-ignore', (_e, ignore) => {
  * 现在改成：按下时记住光标相对窗口的抓取偏移，移动时直接用光标的绝对坐标定位，
  * 并把落点夹在最近的显示器工作区内，保证至少露出一部分可再次抓取。 */
 let dragGrab = null;
+let dragSize = null;
 const MIN_VISIBLE = 56; // 拖出边界时至少留这么多像素在屏内
 
 function clampToWorkArea(x, y) {
@@ -613,15 +614,19 @@ ipcMain.on('drag-begin', () => {
   const [x, y] = win.getPosition();
   const c = screen.getCursorScreenPoint();
   dragGrab = { x: c.x - x, y: c.y - y };
+  const bounds = win.getBounds();
+  // Windows 高 DPI 下 setBounds 会把传入尺寸按 DIP 向上取整一次，减去这一取整量才能保持 getBounds() 的原始物理尺寸。
+  dragSize = { width: Math.max(1, bounds.width - 1), height: Math.max(1, bounds.height - 1) };
 });
 ipcMain.on('drag-move', () => {
   if (!win || !dragGrab) return;
   const c = screen.getCursorScreenPoint();
   const [nx, ny] = clampToWorkArea(c.x - dragGrab.x, c.y - dragGrab.y);
-  win.setPosition(nx, ny);
+  win.setBounds({ x: nx, y: ny, ...(dragSize || {}) });
 });
 ipcMain.on('drag-end', () => {
   dragGrab = null;
+  dragSize = null;
 });
 ipcMain.on('move-to', (_e, x, y) => {
   if (!win) return;
