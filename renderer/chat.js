@@ -393,6 +393,7 @@ function setupVoice() {
   const Engine = window.SpeechRecognition || window.webkitSpeechRecognition;
   const button = $('voice-btn');
   if (!Engine) {
+    window.pet.log('warn', '[asr] unavailable');
     button.title = '当前 Electron 没有可用的中文语音识别';
     button.addEventListener('click', () => {
       $('input').placeholder = '当前环境没有语音识别入口，先用文字输入';
@@ -403,7 +404,26 @@ function setupVoice() {
   recognition.lang = 'zh-CN';
   recognition.continuous = false;
   recognition.interimResults = true;
+  let gotAudio = false;
+  let responseTimer = null;
+  const clearResponseTimer = () => {
+    clearTimeout(responseTimer);
+    responseTimer = null;
+  };
+  const preview = (text) => {
+    const value = String(text || '').replace(/\s+/g, ' ').trim();
+    return Array.from(value).slice(0, 20).join('') + (Array.from(value).length > 20 ? '…' : '');
+  };
   recognition.onstart = () => {
+    gotAudio = false;
+    clearResponseTimer();
+    responseTimer = setTimeout(() => {
+      if (!gotAudio && listening) {
+        window.pet.log('warn', '[asr] timeout: no audio within 5s');
+        $('input').placeholder = '语音服务没有响应：麦克风没采到声音，或系统没有可用的中文识别';
+      }
+    }, 5000);
+    window.pet.log('info', '[asr] start');
     listening = true;
     button.classList.add('recording');
     button.title = '正在听… 点一下停止';
@@ -413,12 +433,27 @@ function setupVoice() {
     for (let i = event.resultIndex; i < event.results.length; i++) {
       text += event.results[i][0].transcript;
     }
-    if (text) { $('input').value = text; growInput(); }
+    if (text) {
+      window.pet.log('info', '[asr] result', preview(text));
+      $('input').value = text;
+      growInput();
+    }
   };
+  recognition.onaudiostart = () => {
+    gotAudio = true;
+    window.pet.log('info', '[asr] audiostart');
+  };
+  recognition.onaudioend = () => window.pet.log('info', '[asr] audioend');
+  recognition.onspeechend = () => window.pet.log('info', '[asr] speechend');
   recognition.onerror = (event) => {
+    clearResponseTimer();
+    window.pet.log('warn', '[asr] error', event.error || 'unknown');
     $('input').placeholder = event.error === 'not-allowed' ? '麦克风权限被拒绝' : '语音识别失败，请改用文字';
   };
   recognition.onend = () => {
+    clearResponseTimer();
+    window.pet.log('info', '[asr] end', gotAudio ? 'audio=1' : 'audio=0');
+    if (!gotAudio) $('input').placeholder = '语音服务没有响应：麦克风没采到声音，或系统没有可用的中文识别';
     listening = false;
     button.classList.remove('recording');
     button.title = '中文语音输入';

@@ -24,9 +24,13 @@ const WIN_W = 340;
 const WIN_H = 500;
 const HERMES_DIR = path.join(process.env.LOCALAPPDATA || '', 'hermes');
 const logger = require('./logger')({ logDir: path.join(HERMES_DIR, 'logs') });
-console.log = logger.info;
-console.error = logger.error;
-console.warn = logger.warn;
+const isFrameworkNoise = (args) => {
+  const first = String(args[0] || '');
+  return first.startsWith('(electron)') || first.startsWith('(node)');
+};
+console.log = (...args) => { if (!isFrameworkNoise(args)) logger.info(...args); };
+console.error = (...args) => { if (!isFrameworkNoise(args)) logger.error(...args); };
+console.warn = (...args) => { if (!isFrameworkNoise(args)) logger.warn(...args); };
 const PERSONA_FILE = path.join(__dirname, 'persona.json');
 let win = null;
 let tray = null;

@@ -94,7 +94,7 @@ module.exports = function createSettingsStore({ dataDir, safeStorage, hermesDir,
         apiKeyCipher: safeStorage.encryptString(key).toString('base64')
       };
       writeJson(settingsFile(), next);
-      console.log(`[hermes-pet] 已从 Hermes 导入 DeepSeek 密钥（长度 ${key.length}，base ${base}）`);
+      console.log('[hermes-pet] 已从 Hermes 导入密钥');
       return { ok: true, base, keyLength: key.length };
     } catch (error) {
       return { ok: false, reason: error.message };
