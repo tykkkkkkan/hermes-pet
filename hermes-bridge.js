@@ -145,13 +145,29 @@ function taskStatus(task, column) {
 function normalizeBoard(board) {
   const columns = Array.isArray(board?.columns) ? board.columns : [];
   const tasks = [];
+  const seenTaskIds = new Set();
   const counts = { triage: 0, todo: 0, scheduled: 0, ready: 0, running: 0, blocked: 0, review: 0, done: 0 };
   for (const column of columns) {
     const name = String(column?.name || '').toLowerCase();
     const rows = Array.isArray(column?.tasks) ? column.tasks : [];
-    counts[name] = rows.length;
+    const uniqueRows = rows.filter((task) => {
+      const id = task?.id;
+      if (id == null || id === '') return true;
+      const key = String(id);
+      if (seenTaskIds.has(key)) return false;
+      seenTaskIds.add(key);
+      return true;
+    });
+    if (Object.prototype.hasOwnProperty.call(counts, name)) counts[name] += uniqueRows.length;
     for (const task of rows) {
-      tasks.push({ ...task, status: taskStatus(task, name), column: name });
+      const id = task?.id;
+      if (id != null && id !== '' && !seenTaskIds.has(String(id))) continue;
+      if (id != null && id !== '' && tasks.some((row) => String(row.id) === String(id))) continue;
+      const providedTitle = [task?.title, task?.name]
+        .map((value) => String(value || '').trim())
+        .find(Boolean);
+      const title = providedTitle || `任务 #${id == null || id === '' ? '?' : id}`;
+      tasks.push({ ...task, title, status: taskStatus(task, name), column: name });
     }
   }
   const running = tasks.filter((task) => task.status === 'running');

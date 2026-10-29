@@ -259,12 +259,14 @@ Cubism Core         4.2.4（csmGetVersion=0x04020004，官方 CDN 的 5.1 会让
 - [x] Live2D 渲染技术验证（Phase 0：PixiJS + Cubism Core 4.2 跑通）
 - [x] 2.5D 分层渲染：AI 表情差分 → 程序拆层 → PixiJS 分层驱动（扭头/眨眼/口型/视线）
 - [x] 情绪表情接入（12 张表情贴片，六态 + 8 种情绪映射，状态优先级高于情绪）
-- [ ] 语音输入转写走本地 ASR（当前仅浏览器 SpeechRecognition 入口）
+- [x] 语音输入转写走本地 ASR（sherpa-onnx WASM + 首次启动下载模型，中文识别实测平均 94.3%）
 - [x] 仪表盘形态：任务列表与 Agent 状态面板（四组任务、空态、总数与滚动）
 
 ## 已知未做
 
-- 语音输出 TTS（明确不做）、本地 ASR 未接
+- 语音输出 TTS（明确不做）
+- 分层素材的接缝问题（`face-calm.png` 是整图，叠在已有脸的 body 上有硬边），已诊断未修
+- 只有 Huihui / Kangkang / Yaoyao 三个本机音色，晓伊/晓晓需要装 Windows OneCore 中文语音包
 - 屏幕理解与 UI Automation：不做，重复实现等于第二套权限模型
 - 跨日记忆「隔天主动提起」待实测
 - 审批白名单只有总开关，没有「只对这类操作提醒」的细粒度规则

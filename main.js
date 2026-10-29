@@ -198,8 +198,7 @@ function formatUtterance(text, options = {}) {
     }
   });
   if (address !== previous) {
-    petState.address = address;
-    petState.addressHistory = [...history, address].slice(-2);
+    petStateStore.set({ address, addressHistory: [...history, address].slice(-2) });
   }
   return result;
 }

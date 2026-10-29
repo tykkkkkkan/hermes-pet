@@ -552,7 +552,8 @@ function pickIdleAction(previousId) {
 function idleLoop() {
   const wait = 3500 + Math.random() * 4500;
   setTimeout(() => {
-    if (!dragging && !bubbleVisible() && (petEl.dataset.state || 'idle') === 'idle') {
+    if (!dragging && !bubbleVisible() && !gestureEl.classList.contains('gesture-active')
+      && !gestureEl.classList.contains('jolt') && (petEl.dataset.state || 'idle') === 'idle') {
       playAction('all', pickIdleAction(lastActionId));
     }
     idleLoop();
