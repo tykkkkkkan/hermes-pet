@@ -32,6 +32,7 @@ const stateSources = {
 const hasV2 = fs.existsSync(v2Manifest);
 
 contextBridge.exposeInMainWorld('pet', {
+  log: (level, ...args) => ipcRenderer.send('renderer-log', String(level || 'info'), args.map(String)),
   regions: petRegions,
   actions: petActions.ACTIONS,
   chooseAction: (group, previousId) => petActions.chooseAction(group, previousId),

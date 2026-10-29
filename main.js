@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, shell, globalShortcut, safeStorage, Notification, protocol, net } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, shell, globalShortcut, safeStorage, Notification, protocol, net, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
@@ -23,6 +23,10 @@ const createHermesPoller = require('./hermes-poller');
 const WIN_W = 340;
 const WIN_H = 500;
 const HERMES_DIR = path.join(process.env.LOCALAPPDATA || '', 'hermes');
+const logger = require('./logger')({ logDir: path.join(HERMES_DIR, 'logs') });
+console.log = logger.info;
+console.error = logger.error;
+console.warn = logger.warn;
 const PERSONA_FILE = path.join(__dirname, 'persona.json');
 let win = null;
 let tray = null;
@@ -30,10 +34,13 @@ let chatWin = null;
 let topMost = true;
 let chatBusy = false;
 let petState = null;
+let rendererCrashCount = 0;
+let rendererStableTimer = null;
 const settingsStore = createSettingsStore({
   dataDir: () => app.getPath('userData'),
   safeStorage,
   hermesDir: HERMES_DIR,
+  logger,
   onSave: () => applyAppearance()
 });
 const { readJson, writeJson } = settingsStore;
@@ -63,6 +70,14 @@ const savePetState = petStateStore.save;
 const adjustPetState = (...args) => (petStateStore.adjust(...args), pushPetState());
 
 const taskTitle = petStateStore.taskTitle;
+
+process.on('uncaughtException', (error) => {
+  logger.error('[main] uncaughtException', error);
+  try { dialog.showErrorBox('赫尔墨兹遇到问题', `${error?.message || error}\n\n日志：${logger.dir}`); } catch {}
+});
+process.on('unhandledRejection', (reason) => {
+  logger.error('[main] unhandledRejection', reason instanceof Error ? reason : String(reason));
+});
 
 function announce(text, options = {}) {
   if (!text) return;
@@ -136,6 +151,7 @@ const bridgeService = createBridgeServer({
   }),
   appVersion: () => app.getVersion(),
   appPath: __dirname,
+  logger,
   announce,
   setStatus: setPetState,
   interact: interactPet,
@@ -326,6 +342,18 @@ function createWindow() {
     const message = first && typeof first === 'object' && 'message' in first ? first.message : args[2];
     if (typeof message === 'string' && (message.startsWith('[pet-live2d]') || message.startsWith('[pet-puppet]'))) console.log(message);
   });
+  win.webContents.on('render-process-gone', (_event, details) => {
+    logger.error('[main] 渲染进程退出', { reason: details?.reason, exitCode: details?.exitCode });
+    if (++rendererCrashCount <= 3) {
+      setTimeout(() => { if (win && !win.isDestroyed()) win.reload(); }, 800);
+    } else {
+      logger.error('[main] 渲染进程连续崩溃超过 3 次，停止自动重载');
+    }
+  });
+  win.webContents.on('did-finish-load', () => {
+    clearTimeout(rendererStableTimer);
+    rendererStableTimer = setTimeout(() => { rendererCrashCount = 0; }, 30000);
+  });
   win.on('move', () => {
     if (!win.isDestroyed()) {
       const [x, y] = win.getPosition();
@@ -356,6 +384,10 @@ function createChatWindow() {
     }
   });
   chatWin.loadFile(path.join(__dirname, 'renderer', 'chat.html'));
+  chatWin.webContents.on('render-process-gone', (_event, details) => {
+    logger.error('[main] 聊天窗渲染进程退出', { reason: details?.reason, exitCode: details?.exitCode });
+    if (chatWin && !chatWin.isDestroyed()) chatWin.close();
+  });
   chatWin.once('ready-to-show', () => {
     chatWin.show();
     pushPetState();
@@ -384,6 +416,7 @@ function createTray() {
     { label: '安静一会儿', click: () => win && win.hide() },
     { type: 'separator' },
     { label: '打开 Hermes 目录', click: () => shell.openPath(HERMES_DIR) },
+    { label: '打开日志目录', click: () => shell.openPath(logger.dir) },
     { type: 'separator' },
     { label: '退出', click: () => app.quit() }
   ]));
@@ -439,6 +472,10 @@ function openMenuWindow() {
   });
   menuWin.setAlwaysOnTop(true, 'screen-saver');
   menuWin.loadFile(path.join(__dirname, 'renderer', 'menu.html'));
+  menuWin.webContents.on('render-process-gone', (_event, details) => {
+    logger.error('[main] 菜单窗渲染进程退出', { reason: details?.reason, exitCode: details?.exitCode });
+    if (menuWin && !menuWin.isDestroyed()) menuWin.close();
+  });
   menuWin.once('ready-to-show', () => {
     if (!menuWin) return;
     menuWin.show();
@@ -451,6 +488,10 @@ function openMenuWindow() {
   menuWin.on('closed', () => { menuWin = null; });
 }
 ipcMain.on('open-menu', () => openMenuWindow());
+ipcMain.on('renderer-log', (_e, level, args) => {
+  const write = level === 'error' ? logger.error : level === 'warn' ? logger.warn : logger.info;
+  write('[renderer]', ...(Array.isArray(args) ? args : [args]));
+});
 ipcMain.on('close-menu', () => closeMenuWindow());
 ipcMain.on('menu-action', (_e, act) => {
   closeMenuWindow();
@@ -698,6 +739,16 @@ if (!gotLock) {
     createWindow();
     createTray();
     startBridgeServer();
+    if (process.env.PET_DEV_CRASH_TEST === '1') {
+      setTimeout(() => { throw new Error('PET_DEV_CRASH_TEST'); }, 3000);
+    }
+    if (process.env.PET_DEV_RENDER_CRASH_BURST === '1') {
+      let crashCount = 0;
+      const crashTimer = setInterval(() => {
+        if (++crashCount > 4) return clearInterval(crashTimer);
+        if (win && !win.isDestroyed()) win.webContents.forcefullyCrashRenderer();
+      }, 1200);
+    }
     if (process.env.PET_DISABLE_POLL !== '1') startHermesPolling();
     globalShortcut.register('CommandOrControl+Shift+H', showChat);
   });

@@ -21,14 +21,15 @@ const DEFAULT_SETTINGS = {
   dndAllowApproval: true
 };
 
-module.exports = function createSettingsStore({ dataDir, safeStorage, hermesDir, defaults, onSave } = {}) {
+module.exports = function createSettingsStore({ dataDir, safeStorage, hermesDir, defaults, onSave, logger } = {}) {
   const getDataDir = typeof dataDir === 'function' ? dataDir : () => String(dataDir || '');
   const baseDefaults = { ...(defaults === undefined ? DEFAULT_SETTINGS : (defaults || {})) };
 
   function readJson(file, fallback) {
     try {
       return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
-    } catch {
+    } catch (error) {
+      if (error?.code !== 'ENOENT') logger?.warn(`[json-file] 读取失败，已回落默认值：${file}`, error.message);
       return fallback;
     }
   }

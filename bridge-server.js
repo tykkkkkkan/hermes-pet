@@ -15,11 +15,14 @@ module.exports = function createBridgeServer({
   showChat,
   showPet,
   hidePet,
+  logger,
+  listenPort = 0,
   httpModule = http,
   cryptoModule = crypto
 } = {}) {
   let server = null;
   let token = '';
+  let bindAttempts = 0;
 
   function bridgeJson(res, status, payload) {
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -114,8 +117,8 @@ module.exports = function createBridgeServer({
         return bridgeJson(res, 500, { ok: false, error: String(error?.message || error) });
       }
     });
-    server.on('error', (error) => console.error('[hermes-pet] bridge error:', error.message));
-    server.listen(0, '127.0.0.1', () => {
+    const onListening = () => {
+      bindAttempts = 0;
       const address = server.address();
       writeJson(bridgeFile(), {
         pid: process.pid,
@@ -125,7 +128,21 @@ module.exports = function createBridgeServer({
         appPath
       });
       console.log(`[hermes-pet] bridge listening on 127.0.0.1:${address.port}`);
+    };
+    server.on('error', (error) => {
+      (logger?.error || console.error)('[hermes-pet] bridge error:', error.message);
+      if (bindAttempts < 3) {
+        bindAttempts += 1;
+        setTimeout(() => {
+          try { server?.listen(listenPort, '127.0.0.1', onListening); } catch (retryError) {
+            (logger?.error || console.error)('[hermes-pet] bridge retry error:', retryError.message);
+          }
+        }, 1000 * bindAttempts);
+      } else {
+        (logger?.error || console.error)('[hermes-pet] 桥接服务连续失败 3 次，放弃');
+      }
     });
+    server.listen(listenPort, '127.0.0.1', onListening);
     return server;
   }
 

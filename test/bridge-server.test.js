@@ -1,6 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const createBridgeServer = require('../bridge-server');
+const http = require('http');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 function makeServer() {
   return createBridgeServer({
@@ -32,3 +36,40 @@ test('bridgeState 保持基线字段结构', () => {
   assert.equal(state.visible, true);
   assert.equal(state.chatVisible, false);
 });
+
+test('桥接端口占用时会重试并最终监听', async () => {
+  const blocker = http.createServer();
+  await new Promise((resolve) => blocker.listen(0, '127.0.0.1', resolve));
+  const port = blocker.address().port;
+  const bridgeFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-pet-bridge-')), 'bridge.json');
+  const logs = [];
+  const server = createBridgeServer({
+    ...makeServerOptions(),
+    bridgeFile: () => bridgeFile,
+    writeJson: (file, value) => fs.writeFileSync(file, JSON.stringify(value)),
+    logger: { error: (...args) => logs.push(args.join(' ')) },
+    listenPort: port
+  });
+  server.start();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  await new Promise((resolve) => blocker.close(resolve));
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  assert.equal(fs.existsSync(bridgeFile), true);
+  assert.ok(logs.some((line) => line.includes('bridge error')));
+  server.stop();
+});
+
+function makeServerOptions() {
+  return {
+    getState: () => ({}),
+    getVisibility: () => ({}),
+    appVersion: () => 'test',
+    appPath: 'test',
+    announce: () => {},
+    setStatus: () => {},
+    interact: () => {},
+    showChat: () => {},
+    showPet: () => {},
+    hidePet: () => {}
+  };
+}

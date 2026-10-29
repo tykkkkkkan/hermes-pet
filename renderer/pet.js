@@ -72,6 +72,7 @@ function paintFace(key) {
   const src = window.pet.faceSources?.[nextKey];
   if (!src) {
     console.warn(`[pet] 表情 key「${nextKey}」没有对应图源，检查 preload.js 的 faceFiles`);
+    window.pet.log('warn', `[pet] 表情 key「${nextKey}」没有对应图源，检查 preload.js 的 faceFiles`);
     return;
   }
   if (nextKey === currentFaceKey) return;
