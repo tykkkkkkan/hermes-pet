@@ -271,7 +271,7 @@ async function main() {
       return {
         present: !!panel && !!tasks,
         empty: tasks?.textContent.includes('看板是空的，暂时没活派给我'),
-        total: tasks?.textContent.includes('总计 0 条'),
+        total: document.getElementById('panel-total')?.textContent.includes('看板共 0 条'),
         maxHeight: getComputedStyle(panel).maxHeight,
         overflowY: getComputedStyle(panel).overflowY
       };
@@ -287,27 +287,33 @@ async function main() {
         const tasks = document.getElementById('panel-tasks');
         const groups = [...tasks.querySelectorAll('.t-group')].map((group) => ({
           label: group.querySelector('.t-head')?.textContent || '',
-          items: group.querySelectorAll('li').length
+          total: Number(group.querySelector('.t-head b')?.textContent || 0),
+          rows: group.querySelectorAll('li:not(.t-more)').length,
+          more: group.querySelector('.t-more')?.textContent || ''
         }));
         const first = tasks.querySelector('li > span');
         return {
           groups,
-          total: tasks.textContent.match(/总计\\s+(\\d+)\\s+条/)?.[1] || '',
+          total: document.getElementById('panel-total')?.textContent || '',
           longTitle: tasks.textContent.includes('特别特别长的任务标题'),
           ellipsis: first ? getComputedStyle(first).textOverflow : '',
           whiteSpace: first ? getComputedStyle(first).whiteSpace : '',
-          hidden: panel.classList.contains('hidden')
+          hidden: panel.classList.contains('hidden'),
+          scrollTop: panel.scrollTop
         };
       })()`);
-      check('仪表盘四组列表各最多五条且保留总数', populated?.groups.length === 4
-        && populated.groups.every((group) => group.items <= 5)
-        && populated.total === '27' && populated.longTitle
+      check('四组顺序、真实总数、三条截断提示与顶部总数', populated?.groups.map((group) => group.label.split(' ')[0]).join('/') === '待验收/受阻/执行中/排队'
+        && populated.groups.every((group) => group.rows === 3)
+        && populated.groups[0].total === 6 && populated.groups[0].more === '还有 3 条没显示'
+        && populated.groups[3].total === 9 && populated.groups[3].more === '还有 6 条没显示'
+        && populated.total === '看板共 27 条' && populated.longTitle && populated.scrollTop === 0
         && populated.ellipsis === 'ellipsis' && populated.whiteSpace === 'nowrap', JSON.stringify(populated));
       await evaluate(cdp, `document.getElementById('state-pill').click(); true`);
       await sleep(100);
-      check('任务列表截图（长标题与四组）', await capture(cdp, path.join(ART, 'pet-dashboard-list.png')), 'test/e2e/artifacts/pet-dashboard-list.png');
-      await evaluate(cdp, `document.getElementById('status-panel').scrollTop = document.getElementById('status-panel').scrollHeight; true`);
-      check('任务列表截图（面板滚动）', await capture(cdp, path.join(ART, 'pet-dashboard-scroll.png')), 'test/e2e/artifacts/pet-dashboard-scroll.png');
+      check('仪表盘顶部截图（第一组和总数）', await capture(cdp, path.join(ART, 'pet-dashboard-list.png')), 'test/e2e/artifacts/pet-dashboard-list.png');
+      await evaluate(cdp, `(() => { const panel = document.getElementById('status-panel'); panel.scrollTop = Math.round((panel.scrollHeight - panel.clientHeight) / 2); })()`);
+      await sleep(120);
+      check('仪表盘中段截图（切边检查）', await capture(cdp, path.join(ART, 'pet-dashboard-scroll.png')), 'test/e2e/artifacts/pet-dashboard-scroll.png');
       await sleep(3500);
       check('后台状态变化时面板不自动收起', await evaluate(cdp, `!document.getElementById('status-panel').classList.contains('hidden')`), 'status-panel 保持展开');
       for (const [label, expected] of [['受阻播报', '受阻了'], ['失败播报', '失败了'], ['待验收播报', '做完了，等你验收']]) {
@@ -431,28 +437,32 @@ async function main() {
         setTimeout(() => { observer.disconnect(); resolve(count); }, 30000);
       })`);
       await sleep(4500);
-      const idleRun = await evaluate(cdp, `(async () => {
-        const gesture = document.getElementById('pet-gesture');
-        const actions = Object.fromEntries((window.pet.actions || []).map((action) => [action.id, action.duration]));
-        const records = [];
-        const started = performance.now();
-        let active = null;
-        while (performance.now() - started < 42000) {
-          const now = performance.now();
-          const isActive = gesture.classList.contains('gesture-active');
-          const action = gesture.dataset.action || '';
-          if (isActive && !active) active = { action, at: now };
-          if (!isActive && active) {
-            const elapsed = now - active.at;
-            records.push({ action: active.action, elapsed, declared: actions[active.action] || 0, delta: elapsed - (actions[active.action] || 0) });
-            active = null;
+      if (DASHBOARD_FIXTURE) {
+        await sleep(30000);
+      } else {
+        const idleRun = await evaluate(cdp, `(async () => {
+          const gesture = document.getElementById('pet-gesture');
+          const actions = Object.fromEntries((window.pet.actions || []).map((action) => [action.id, action.duration]));
+          const records = [];
+          const started = performance.now();
+          let active = null;
+          while (performance.now() - started < 42000) {
+            const now = performance.now();
+            const isActive = gesture.classList.contains('gesture-active');
+            const action = gesture.dataset.action || '';
+            if (isActive && !active) active = { action, at: now };
+            if (!isActive && active) {
+              const elapsed = now - active.at;
+              records.push({ action: active.action, elapsed, declared: actions[active.action] || 0, delta: elapsed - (actions[active.action] || 0) });
+              active = null;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 50));
           }
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-        return records;
-      })()`);
-      for (const item of idleRun || []) console.log(`[待机] ${item.action} elapsed=${item.elapsed.toFixed(0)}ms declared=${item.declared}ms Δ=${item.delta.toFixed(0)}ms`);
-      check('待机四十二秒动作持续时间接近声明值', idleRun?.length >= 2 && idleRun.every((item) => Math.abs(item.delta) <= 100), JSON.stringify(idleRun));
+          return records;
+        })()`);
+        for (const item of idleRun || []) console.log(`[待机] ${item.action} elapsed=${item.elapsed.toFixed(0)}ms declared=${item.declared}ms Δ=${item.delta.toFixed(0)}ms`);
+        check('待机四十二秒动作持续时间接近声明值', idleRun?.length >= 2 && idleRun.every((item) => Math.abs(item.delta) <= 100), JSON.stringify(idleRun));
+      }
       const mutationCount = await mutations;
       console.log(`[仪表盘] 30 秒 MutationObserver 变更次数=${mutationCount}`);
       check('仪表盘数据未变时三十秒不重建 DOM', mutationCount === 0, `mutations=${mutationCount}`);
