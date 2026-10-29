@@ -1,6 +1,7 @@
 const petEl = document.getElementById('pet');
 const petBody = document.getElementById('pet-body');
 const petFace = document.getElementById('pet-face');
+const petFaceAlt = document.getElementById('pet-face-alt');
 const petInner = document.getElementById('pet-inner-b');
 const stateEl = document.getElementById('pet-state');
 const gestureEl = document.getElementById('pet-gesture');
@@ -22,6 +23,48 @@ const panelTask = document.getElementById('panel-task');
 const panelAgents = document.getElementById('panel-agents');
 const panelTasks = document.getElementById('panel-tasks');
 let latestPetState = {};
+let behaviorState = 'idle';
+let mouseNear = false;
+let irritability = 0;
+let interactionScale = 1;
+const pokeCounts = { head: 0, face: 0, body: 0, feet: 0 };
+const pokeAt = { head: 0, face: 0, body: 0, feet: 0 };
+const chainTimers = [];
+const CHAINS = {
+  pokedFirst: [{ intent: 'panic', delay: 0 }, { intent: 'inspect', delay: 480 }, { intent: 'settle', delay: 420 }],
+  pokedRepeated: [{ intent: 'withdraw', delay: 0 }, { intent: 'withdraw', delay: 520 }, { intent: 'inspect', delay: 800 }],
+  taskDone: [{ intent: 'celebrate', delay: 0 }, { intent: 'celebrate', delay: 700 }, { intent: 'settle', delay: 600 }],
+  taskBlocked: [{ intent: 'panic', delay: 0 }, { intent: 'inspect', delay: 620 }, { intent: 'panic', delay: 560 }]
+};
+function evaluateCurrentBehavior() {
+  behaviorState = window.petBehavior?.evaluateBehavior?.({
+    affection: Number(latestPetState.affection) || 0,
+    energy: Number(latestPetState.energy) || 1,
+    idleMs: Date.now() - lastActivityAt,
+    mouseNear,
+    queue: latestPetState.queue,
+    irritability
+  }) || 'idle';
+  petEl.dataset.behavior = behaviorState;
+  return behaviorState;
+}
+function runChain(name) {
+  while (chainTimers.length) clearTimeout(chainTimers.pop());
+  let elapsed = 0;
+  for (const step of CHAINS[name] || []) {
+    elapsed += step.delay;
+    chainTimers.push(setTimeout(() => playAction('all', '', step.intent), elapsed));
+  }
+}
+function notePoke(zone) {
+  const now = Date.now();
+  if (now - pokeAt[zone] > 30000) pokeCounts[zone] = Math.floor(pokeCounts[zone] * 0.3);
+  pokeAt[zone] = now;
+  pokeCounts[zone] += 1;
+  irritability = Object.values(pokeCounts).reduce((sum, count) => sum + count, 0);
+  interactionScale = Math.max(0.25, 1 / (1 + pokeCounts[zone] * 0.35));
+  return interactionScale;
+}
 
 let lastAgentsJson = '';
 let lastTasksJson = '';
@@ -66,6 +109,7 @@ function paintTaskLists(tasks) {
 
 let currentSrc = petBody.getAttribute('src');
 let currentFaceKey = 'idle';
+let activeFace = petFace;
 let faceTimer = null;
 const blinkLayer = document.getElementById('pet-blink');
 
@@ -79,12 +123,20 @@ function paintFace(key) {
   }
   if (nextKey === currentFaceKey) return;
   currentFaceKey = nextKey;
-  petFace.classList.add('swapping');
   clearTimeout(faceTimer);
-  faceTimer = setTimeout(() => {
-    petFace.src = src;
-    requestAnimationFrame(() => petFace.classList.remove('swapping'));
-  }, 160);
+  if (!petFaceAlt) {
+    petFace.classList.add('swapping');
+    faceTimer = setTimeout(() => { petFace.src = src; requestAnimationFrame(() => petFace.classList.remove('swapping')); }, 160);
+    return;
+  }
+  const incoming = activeFace === petFace ? petFaceAlt : petFace;
+  incoming.src = src;
+  petFace.src = src;
+  incoming.classList.remove('crossfade-in', 'crossfade-out');
+  activeFace.classList.remove('crossfade-in');
+  activeFace.classList.add('crossfade-out');
+  incoming.classList.add('crossfade-in');
+  activeFace = incoming;
 }
 
 /* ---------------- 眨眼（叠加帧交叉淡化，闭快睁慢，偶发双连眨） ---------------- */
@@ -140,11 +192,13 @@ function maybeSpeakByState(s) {
     lastSpokenState = JSON.parse(JSON.stringify(s || {}));
     return;
   }
-  if (dragging || bubbleVisible() || menuOpen || (petEl.dataset.state || 'idle') !== 'idle') return;
+  if (dragging || bubbleVisible() || menuOpen || behaviorState === 'sulky' || (petEl.dataset.state || 'idle') !== 'idle') return;
   const prev = lastSpokenState;
   if ((s.queue?.review || 0) > (prev.queue?.review || 0)) {
+    runChain('taskDone');
     sayAddressed(`{address}，${s.queue.review}个做完了，等你验收`, 4200);
   } else if ((s.queue?.blocked || 0) > (prev.queue?.blocked || 0)) {
+    runChain('taskBlocked');
     sayAddressed('{address}，有活卡住了，得你去看一眼', 4200);
   } else if ((prev.queue?.running || 0) > 0 && (s.queue?.running || 0) === 0) {
     sayAddressed('{address}，都干完了', 3200);
@@ -226,11 +280,16 @@ window.addEventListener('mousemove', (e) => {
     lastActivityAt = Date.now();
   }
   const bounds = petEl.getBoundingClientRect();
+  mouseNear = e.clientX >= hit.left && e.clientX <= hit.right && e.clientY >= hit.top && e.clientY <= hit.bottom;
+  evaluateCurrentBehavior();
   const lookX = Math.max(-1, Math.min(1, (e.clientX - (bounds.left + bounds.width / 2)) / (bounds.width / 2)));
   const lookY = Math.max(-1, Math.min(1, (e.clientY - (bounds.top + bounds.height / 2)) / (bounds.height / 2)));
-  petEl.style.setProperty('--look-x', `${(lookX * 2.2).toFixed(1)}px`);
-  petEl.style.setProperty('--look-y', `${(lookY * 1.8).toFixed(1)}px`);
-  window.petLive2d?.setLook(lookX, lookY);
+  const attention = window.petBehavior?.BEHAVIOR_CONFIG?.[behaviorState]?.attention;
+  const attentionX = behaviorState === 'sulky' ? -0.6 : attention === 'task' ? -0.35 : attention === 'none' ? Math.sin(Date.now() / 3400) * 0.6 : lookX;
+  const attentionY = behaviorState === 'sulky' ? 0.15 : attention === 'task' ? -0.2 : attention === 'none' ? Math.cos(Date.now() / 2380) * 0.3 : lookY;
+  petEl.style.setProperty('--look-x', `${(attentionX * 2.2).toFixed(1)}px`);
+  petEl.style.setProperty('--look-y', `${(attentionY * 1.8).toFixed(1)}px`);
+  window.petLive2d?.setLook(attentionX, attentionY);
   if (dragging) return;
   updateIgnore(e.clientX, e.clientY);
 });
@@ -284,7 +343,11 @@ function endDrag(commit) {
     const x = (lastX - r.left) / r.width;
     const y = (lastY - r.top) / r.height;
     const zone = hitPetRegion(x, y);
-    playAction(zone);
+    const factor = notePoke(zone);
+    evaluateCurrentBehavior();
+    playAction(zone, '', behaviorState === 'sulky' ? 'withdraw' : '');
+    if (factor < 0.6) runChain('pokedRepeated');
+    else if (factor > 0.9) runChain('pokedFirst');
     window.petLive2d?.onInteract(zone);
     window.pet.interact(zone);
   }
@@ -339,17 +402,19 @@ let menuOpen = false;
 function paintState(state) {
   const s = state || {};
   latestPetState = s;
+  evaluateCurrentBehavior();
   maybeSpeakByState(s);
   stateText.textContent = s.hermesText || s.statusText || 'Hermes 离线';
   statePill.dataset.state = s.status || 'idle';
   stateDot.dataset.state = s.status || 'idle';
   petEl.dataset.state = s.status || 'idle';
   petEl.dataset.emotion = s.emotion || '平静';
+  window.petLive2d?.setEmotion?.(s.emotion || '平静');
   const emotionFace = window.pet.faceMaps?.emotion || {};
   const stateFace = window.pet.faceMaps?.state || {};
   const face = s.status === 'error'
     ? ((s.failureSeverity === 'high' || s.mood <= 25) ? 'cry' : 'angry')
-    : stateFace[s.status] || emotionFace[s.emotion] || 'idle';
+    : stateFace[s.status] || (s.status === 'idle' ? window.petBehavior?.BEHAVIOR_CONFIG?.[behaviorState]?.face : '') || emotionFace[s.emotion] || 'idle';
   petEl.dataset.face = face;
   paintFace(face);
   const bodyState = ['idle', 'working', 'thinking', 'success', 'sleep', 'error'].includes(s.status)
@@ -510,7 +575,7 @@ function spawnActionEffect(effect) {
 function playAction(group, requestedId = '', intent = '') {
   const action = requestedId
     ? window.pet.actions?.find((item) => item.id === requestedId)
-    : window.pet.chooseAction?.(group, lastActionId, latestPetState.emotion || '', intent);
+    : window.pet.chooseAction?.(group, lastActionId, latestPetState.emotion || '', intent || (window.petBehavior?.BEHAVIOR_CONFIG?.[behaviorState]?.intents || [])[0]);
   if (!action) return;
   clearGesture();
   lastActionId = action.id;
@@ -522,7 +587,8 @@ function playAction(group, requestedId = '', intent = '') {
   const puppetActive = window.petLive2d?.isReady?.() && action.tracks;
   if (puppetActive) {
     // Puppet 接管骨骼时，CSS 仍保留为隐藏静态层的回退和 smoke 可观测标记。
-    window.petLive2d.playTrack(action.tracks, action.duration, Number(latestPetState.energy) || 1);
+    window.petLive2d.playTrack(action.tracks, action.duration,
+      Math.max(0.7, (Number(latestPetState.energy) || 1) * interactionScale));
   }
   if (petInner) {
     petInner.style.transition = 'none';
@@ -559,11 +625,17 @@ function pickIdleAction(previousId) {
 }
 
 function idleLoop() {
-  const wait = 3500 + Math.random() * 4500;
+  evaluateCurrentBehavior();
+  const cfg = window.petBehavior?.BEHAVIOR_CONFIG?.[behaviorState] || { minMs: 3500, maxMs: 8000, intents: [] };
+  const wait = Number.isFinite(cfg.minMs) ? cfg.minMs + Math.random() * (cfg.maxMs - cfg.minMs) : 30000;
   setTimeout(() => {
-    if (!dragging && !bubbleVisible() && !gestureEl.classList.contains('gesture-active')
+    if (!dragging && !bubbleVisible() && behaviorState !== 'sleeping' && !gestureEl.classList.contains('gesture-active')
       && !gestureEl.classList.contains('jolt') && (petEl.dataset.state || 'idle') === 'idle') {
-      playAction('all', pickIdleAction(lastActionId));
+      const grooming = ['hat-check', 'cape-flick', 'side-brace'];
+      const groomingId = behaviorState === 'idle' && Date.now() - lastActivityAt > 240000 && Math.random() < 0.3
+        ? grooming[Math.floor(Math.random() * grooming.length)] : '';
+      const intent = cfg.intents?.[Math.floor(Math.random() * cfg.intents.length)] || '';
+      playAction('all', groomingId, intent);
     }
     idleLoop();
   }, wait);

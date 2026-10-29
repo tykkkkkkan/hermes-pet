@@ -5,6 +5,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const petEmotion = require('../pet-emotion');
 const createPetState = require('../pet-state');
+const { energyAt } = require('../pet-state');
+
+test('精力按时段变化', () => {
+  assert.equal(energyAt(3), 0.15);
+  assert.equal(energyAt(9), 0.95);
+  assert.equal(energyAt(13), 0.55);
+  assert.equal(energyAt(20), 1);
+});
 
 function makeStore(stateText) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-pet-state-'));

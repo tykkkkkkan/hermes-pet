@@ -35,6 +35,8 @@
   let cur = { ...STATES.idle };
 
   let lookX = 0, lookY = 0, lookCX = 0, lookCY = 0;
+  let gazeTargetX = 0, gazeTargetY = 0, nextSaccadeAt = 0;
+  let emotionBias = { eye: 0, mouth: 0, rot: 0, breath: 1, lean: 0 };
   let speakUntil = 0;
   const imp = { rot: 0, dy: 0, lean: 0, jump: 0 };
   let activeTrack = null;
@@ -383,6 +385,19 @@
     const now = performance.now();
     const dt = Math.min(3, (app.ticker.deltaMS || 16.667) / 16.667);
     const pose = sampleTrack(now);
+    if (now >= nextSaccadeAt) {
+      nextSaccadeAt = now + 300 + Math.random() * 500;
+      if (state === 'sleep' || state === 'error') {
+        gazeTargetX = 0;
+        gazeTargetY = 0;
+      } else if (Math.random() < 0.6) {
+        gazeTargetX = lookX;
+        gazeTargetY = lookY;
+      } else {
+        gazeTargetX = (Math.random() - 0.5) * 1.4;
+        gazeTargetY = (Math.random() - 0.5) * 0.8;
+      }
+    }
 
     // 每 30 帧校正一次尺寸：跨屏 DPI 变化、窗口被系统微调时不一定有 resize 事件
     if ((tick.frames = (tick.frames || 0) + 1) % 30 === 0) fit();
@@ -393,12 +408,12 @@
     cur.eye = lerp(cur.eye, target.eye, 0.12);
     cur.mouth = lerp(cur.mouth, target.mouth, 0.14);
     cur.breath = lerp(cur.breath, target.breath, 0.05);
-    lookCX = lerp(lookCX, lookX, 0.11);
-    lookCY = lerp(lookCY, lookY, 0.11);
+    lookCX = lerp(lookCX, gazeTargetX, 0.35);
+    lookCY = lerp(lookCY, gazeTargetY, 0.35);
 
     /* 眼睛：以纵向压缩表现眯眼（上下自然露出眼皮），只在接近闭合时才收 alpha。
        直接用 alpha 淡出会让半睁状态的眼睛发灰透明，观感很差。 */
-    const openness = clamp(cur.eye * (pose.eye == null ? 1 : pose.eye) * blinkFactor(now), 0, 1);
+    const openness = clamp((cur.eye + emotionBias.eye) * (pose.eye == null ? 1 : pose.eye) * blinkFactor(now), 0, 1);
     eyesSprite.scale.y = 0.12 + 0.88 * openness;
     eyesSprite.alpha = openness < 0.18 ? openness / 0.18 : 1;
     eyesSprite.position.set(
@@ -409,7 +424,7 @@
     /* 头部：状态倾角 + 视线跟随 + 互动冲量。
        再加两笔透视：转头时沿 X 轴压扁（cos 效应）+ 轻微斜切，
        这是"一张平面的脸"变成"有体积的头"最关键的一步。 */
-    const rotDeg = cur.rot + (pose.rot || 0) + lookCX * 7.2 + imp.rot;
+    const rotDeg = cur.rot + emotionBias.rot + (pose.rot || 0) + lookCX * 7.2 + imp.rot;
     headC.rotation = (rotDeg * Math.PI) / 180;
     headC.position.set(meta.head.pivotX + lookCX * 3.4, meta.head.pivotY + cur.dy + (pose.dy || 0) + lookCY * 2 + imp.dy);
     headC.scale.x = 1 - Math.abs(lookCX) * 0.085;
@@ -417,7 +432,7 @@
 
     /* 嘴部：说话时按语音节奏开合，节拍不依赖 TTS */
     const speaking = now < speakUntil;
-    let mouthOpen = cur.mouth + (pose.mouth || 0);
+    let mouthOpen = cur.mouth + emotionBias.mouth + (pose.mouth || 0);
     if (speaking) {
       const beat = Math.sin(now / 88) * 0.5 + 0.5;
       mouthOpen = Math.max(mouthOpen, 0.35 + beat * 0.55);
@@ -430,11 +445,11 @@
     /* 呼吸与重心摆动。
        身体横向位移与视线相反（对立式）：头往左看、身子微往右，
        才有"转身"的体积感，而不是整只角色一起平移。 */
-    const breathStrength = cur.breath * (pose.breath == null ? 1 : pose.breath);
+    const breathStrength = cur.breath * emotionBias.breath * (pose.breath == null ? 1 : pose.breath);
     const breath = Math.sin((now / 570) * breathStrength) * 0.018;
     breathe.scale.y = 1 + breath;
     breathe.scale.x = 1 - breath * 0.45;
-    breathe.x = Math.sin(now / 1900) * 1.3 + (cur.lean + (pose.lean || 0)) * 0.35 - lookCX * 1.5;
+    breathe.x = Math.sin(now / 1900) * 1.3 + (cur.lean + emotionBias.lean + (pose.lean || 0)) * 0.35 - lookCX * 1.5;
     breathe.rotation = -lookCX * 0.012;
 
     /* 投影：起跳时缩小变淡、呼吸时跟着起伏，影子是"离地"的唯一线索 */
@@ -474,6 +489,18 @@
     setLook(x, y) {
       lookX = clamp(x, -1, 1);
       lookY = clamp(y, -1, 1);
+    },
+    setEmotion(next) {
+      const poses = {
+        开心: { eye: .12, mouth: .35, rot: 1, breath: 1.15, lean: 0 },
+        得意: { eye: -.08, mouth: .25, rot: -4, breath: 1.05, lean: 0 },
+        '有点烦': { eye: -.22, mouth: .05, rot: -6, breath: .9, lean: 0 },
+        委屈: { eye: -.12, mouth: .15, rot: 5, breath: .9, lean: 0 },
+        犯困: { eye: -.3, mouth: 0, rot: -2, breath: .72, lean: -1 },
+        兴奋: { eye: .15, mouth: .2, rot: 2, breath: 1.3, lean: 0 },
+        闹别扭: { eye: -.18, mouth: 0, rot: -8, breath: .85, lean: 1 }
+      };
+      emotionBias = poses[next] || { eye: 0, mouth: 0, rot: 0, breath: 1, lean: 0 };
     },
     playTrack(tracks, duration, scale = 1) {
       if (!ready || !tracks || !Number.isFinite(Number(duration)) || Number(duration) <= 0) return false;

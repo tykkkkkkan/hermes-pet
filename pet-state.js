@@ -14,6 +14,17 @@ function taskTitle(task) {
   return String(task?.title || task?.name || `任务 #${task?.id ?? '?'}`).trim();
 }
 
+function energyAt(hour) {
+  const hh = Number(hour);
+  if (hh >= 1 && hh < 6) return 0.15;
+  if (hh < 8) return 0.35;
+  if (hh < 11) return 0.95;
+  if (hh < 14) return 0.55;
+  if (hh < 18) return 0.85;
+  if (hh < 22) return 1;
+  return 0.45;
+}
+
 function slimTask(task) {
   return {
     id: task?.id ?? '',
@@ -61,7 +72,8 @@ function createDefaultState() {
     emotion: '平静',
     address: '好大爹',
     affection: 50,
-    mood: 72
+    mood: 72,
+    energy: energyAt(new Date().getHours())
   };
 }
 
@@ -104,6 +116,10 @@ module.exports = function createPetState({ emotion, settingsStore, onChange } = 
       next = emotion.applyEvent(next, 'ignored');
       next.lastIgnoredAt = now;
     }
+    const lastSeen = Number(next.lastSeen) || now;
+    const hoursAway = Math.max(0, (now - lastSeen) / 3600000);
+    const recovery = hoursAway > 20 ? 1 : hoursAway > 8 ? 0.85 : 0.9;
+    next.energy = Math.max(0, Math.min(1, energyAt(new Date(now).getHours()) * recovery));
     return replace(next);
   }
 
@@ -122,6 +138,7 @@ module.exports = function createPetState({ emotion, settingsStore, onChange } = 
         next.recentNagCount = 0;
       }
     }
+    next.energy = energyAt(new Date().getHours());
     return replace(next);
   }
 
@@ -140,7 +157,8 @@ module.exports = function createPetState({ emotion, settingsStore, onChange } = 
       lastIgnoredAt: Number(saved.lastIgnoredAt) || 0,
       address: saved.address || '好大爹',
       affection: Math.max(0, Math.min(100, Number(saved.affection) || 50)),
-      mood: Math.max(0, Math.min(100, (Number(saved.mood) || 72) - Math.min(24, Math.floor(hoursAway * 1.5))))
+      mood: Math.max(0, Math.min(100, (Number(saved.mood) || 72) - Math.min(24, Math.floor(hoursAway * 1.5)))),
+      energy: energyAt(new Date().getHours()) * (hoursAway > 20 ? 1 : hoursAway > 8 ? 0.85 : 0.9)
     });
   }
 
@@ -179,3 +197,4 @@ module.exports = function createPetState({ emotion, settingsStore, onChange } = 
 
 module.exports.buildTaskPanel = buildTaskPanel;
 module.exports.emptyTaskPanel = emptyTaskPanel;
+module.exports.energyAt = energyAt;

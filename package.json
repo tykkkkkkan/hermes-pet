@@ -8,7 +8,7 @@
     "smoke": "node test/e2e/pet-smoke.mjs",
     "dist": "electron-builder --win",
     "dist:portable": "electron-builder --win portable",
-    "test": "node --test test/memory.test.js test/pet-emotion.test.js test/pet-regions.test.js test/pet-runtime.test.js test/pet-actions.test.js test/pet-interactions.test.js test/pet-faces.test.js test/settings-store.test.js test/pet-speech.test.js test/pet-state.test.js test/bridge-server.test.js test/hermes-poller.test.js test/logger.test.js test/hermes-bridge.test.js",
+    "test": "node --test test/memory.test.js test/pet-emotion.test.js test/pet-regions.test.js test/pet-runtime.test.js test/pet-actions.test.js test/pet-interactions.test.js test/pet-faces.test.js test/settings-store.test.js test/pet-speech.test.js test/pet-state.test.js test/pet-behavior.test.js test/bridge-server.test.js test/hermes-poller.test.js test/logger.test.js test/hermes-bridge.test.js",
     "plugin:validate": "hermes plugins validate . --json",
     "fetch:live2d": "node tools/fetch-live2d-assets.js",
     "analyze:layers": "node tools/analyze-layers.js",

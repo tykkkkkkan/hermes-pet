@@ -200,6 +200,9 @@ body[data-live2d="on"] #pet-state.drowsy { animation: none; }
   opacity: 1;
   transition: opacity .16s ease-out;
 }
+.pet-face-alt { position: absolute; left: 50%; bottom: -17px; display: block; width: 374px; height: 374px; margin-left: -187px; pointer-events: none; -webkit-user-drag: none; opacity: 0; }
+.pet-face.crossfade-out { opacity: 0; }
+.pet-face.crossfade-in { opacity: 1; }
 .pet-face.swapping { opacity: 0; }
 /* 眨眼帧：平时完全透明，闭眼时快速淡入、睁眼时稍慢淡出，闭眼快睁眼慢更像真人 */
 .pet-blink-layer {
