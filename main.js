@@ -1,6 +1,4 @@
 const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, shell, globalShortcut, safeStorage, Notification, protocol, net } = require('electron');
-const http = require('http');
-const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
@@ -20,6 +18,7 @@ const { createTouchPicker } = require('./pet-interactions');
 const createSettingsStore = require('./settings-store');
 const createPetSpeech = require('./pet-speech');
 const createPetState = require('./pet-state');
+const createBridgeServer = require('./bridge-server');
 const WIN_W = 340;
 const WIN_H = 500;
 const HERMES_DIR = path.join(process.env.LOCALAPPDATA || '', 'hermes');
@@ -33,8 +32,6 @@ let hermesTimer = null;
 let hermesPollInFlight = false;
 let previousHermes = null;
 let successUntil = 0;
-let bridgeServer = null;
-let bridgeToken = '';
 let petState = null;
 const settingsStore = createSettingsStore({
   dataDir: () => app.getPath('userData'),
@@ -131,47 +128,6 @@ function formatUtterance(text, options = {}) {
   return result;
 }
 
-function bridgeFile() {
-  // 冒烟测试要在桌宠已经跑着的时候再起一个实例，两者共用同一个桥接文件会互相顶掉端口，
-  // 所以允许测试用环境变量把它引到别处。
-  return process.env.PET_BRIDGE_FILE || path.join(HERMES_DIR, 'hermes-pet-bridge.json');
-}
-
-function bridgeJson(res, status, payload) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(payload));
-}
-
-function bridgeAuthorized(req) {
-  const value = String(req.headers.authorization || '');
-  return value === `Bearer ${bridgeToken}`;
-}
-
-function readBridgeBody(req) {
-  return new Promise((resolve, reject) => {
-    let raw = '';
-    req.setEncoding('utf8');
-    req.on('data', (chunk) => {
-      raw += chunk;
-      if (raw.length > 100000) reject(new Error('请求体过大'));
-    });
-    req.on('end', () => {
-      if (!raw.trim()) return resolve({});
-      try { resolve(JSON.parse(raw)); } catch { reject(new Error('请求体不是有效 JSON')); }
-    });
-    req.on('error', reject);
-  });
-}
-
-function bridgeState() {
-  return {
-    ...petState,
-    pid: process.pid,
-    visible: !!(win && !win.isDestroyed() && win.isVisible()),
-    chatVisible: !!(chatWin && !chatWin.isDestroyed() && chatWin.isVisible())
-  };
-}
-
 function interactPet(zone) {
   const line = pickTouchLine(String(zone || 'body'), petState.emotion, petState.mood);
   applyEmotionEvent('touched');
@@ -185,84 +141,26 @@ function interactPet(zone) {
   announce(line, { kind: 'interaction', userInitiated: true });
 }
 
-function startBridgeServer() {
-  bridgeToken = crypto.randomBytes(32).toString('hex');
-  bridgeServer = http.createServer(async (req, res) => {
-    if (!bridgeAuthorized(req)) return bridgeJson(res, 401, { ok: false, error: '未授权的桌宠桥接请求' });
-    const url = new URL(req.url || '/', 'http://127.0.0.1');
-    try {
-      if (req.method === 'GET' && url.pathname === '/health') {
-        return bridgeJson(res, 200, { ok: true, pid: process.pid, version: app.getVersion() });
-      }
-      if (req.method === 'GET' && url.pathname === '/state') {
-        return bridgeJson(res, 200, { ok: true, state: bridgeState() });
-      }
-      if (req.method !== 'POST') return bridgeJson(res, 404, { ok: false, error: '桥接路径不存在' });
-      const body = await readBridgeBody(req);
-      if (url.pathname === '/say') {
-        const text = String(body.text || '').trim().slice(0, 2000);
-        if (!text) return bridgeJson(res, 400, { ok: false, error: '播报内容不能为空' });
-        announce(text, {
-          kind: String(body.kind || 'plugin').slice(0, 40),
-          notify: body.notify === true,
-          taskResult: body.taskResult === true,
-          userInitiated: true,
-          source: 'hermes-plugin'
-        });
-        return bridgeJson(res, 200, { ok: true, state: bridgeState() });
-      }
-      if (url.pathname === '/status') {
-        const status = String(body.status || 'idle').toLowerCase();
-        if (!['idle', 'thinking', 'working', 'success', 'error', 'sleep'].includes(status)) {
-          return bridgeJson(res, 400, { ok: false, error: '不支持的桌宠状态' });
-        }
-        setPetState(status, String(body.statusText || '').slice(0, 80) || undefined);
-        return bridgeJson(res, 200, { ok: true, state: bridgeState() });
-      }
-      if (url.pathname === '/interact') {
-        if (!['head', 'face', 'body', 'feet'].includes(String(body.zone || ''))) {
-          return bridgeJson(res, 400, { ok: false, error: '不支持的互动区域' });
-        }
-        interactPet(body.zone);
-        return bridgeJson(res, 200, { ok: true, state: bridgeState() });
-      }
-      if (url.pathname === '/open-chat') {
-        showChat();
-        return bridgeJson(res, 200, { ok: true, state: bridgeState() });
-      }
-      if (url.pathname === '/show') {
-        showPet();
-        return bridgeJson(res, 200, { ok: true, state: bridgeState() });
-      }
-      if (url.pathname === '/hide') {
-        if (win && !win.isDestroyed()) win.hide();
-        return bridgeJson(res, 200, { ok: true, state: bridgeState() });
-      }
-      return bridgeJson(res, 404, { ok: false, error: '桥接路径不存在' });
-    } catch (error) {
-      return bridgeJson(res, 500, { ok: false, error: String(error?.message || error) });
-    }
-  });
-  bridgeServer.on('error', (error) => console.error('[hermes-pet] bridge error:', error.message));
-  bridgeServer.listen(0, '127.0.0.1', () => {
-    const address = bridgeServer.address();
-    writeJson(bridgeFile(), {
-      pid: process.pid,
-      port: address.port,
-      token: bridgeToken,
-      startedAt: Date.now(),
-      appPath: __dirname
-    });
-    console.log(`[hermes-pet] bridge listening on 127.0.0.1:${address.port}`);
-  });
-}
-
-function stopBridgeServer() {
-  try { bridgeServer?.close(); } catch {}
-  bridgeServer = null;
-  bridgeToken = '';
-  try { fs.unlinkSync(bridgeFile()); } catch {}
-}
+const bridgeService = createBridgeServer({
+  bridgeFile: () => process.env.PET_BRIDGE_FILE || path.join(HERMES_DIR, 'hermes-pet-bridge.json'),
+  writeJson,
+  getState: () => petState,
+  getVisibility: () => ({
+    visible: !!(win && !win.isDestroyed() && win.isVisible()),
+    chatVisible: !!(chatWin && !chatWin.isDestroyed() && chatWin.isVisible())
+  }),
+  appVersion: () => app.getVersion(),
+  appPath: __dirname,
+  announce,
+  setStatus: setPetState,
+  interact: interactPet,
+  showChat,
+  showPet,
+  hidePet: () => { if (win && !win.isDestroyed()) win.hide(); }
+});
+const bridgeState = bridgeService.bridgeState;
+const startBridgeServer = bridgeService.start;
+const stopBridgeServer = bridgeService.stop;
 
 function applyHermesSnapshot(snapshot) {
   const next = petRuntime.normalizeSnapshot(snapshot);
