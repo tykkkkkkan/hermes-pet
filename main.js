@@ -709,8 +709,10 @@ if (!gotLock) {
     protocol.handle('petasset', async (request) => {
       const { pathname } = new URL(request.url);
       const rel = decodeURIComponent(pathname).replace(/^\/+/, '');
-      const target = path.normalize(path.join(__dirname, rel));
-      if (!target.startsWith(__dirname)) {
+      const base = path.resolve(__dirname);
+      const target = path.resolve(base, rel);
+      const relative = path.relative(base, target);
+      if (relative.startsWith('..') || path.isAbsolute(relative)) {
         return new Response('forbidden', { status: 403 });
       }
       const types = {

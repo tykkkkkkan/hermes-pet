@@ -354,8 +354,9 @@ body[data-live2d="on"] #pet-gesture { animation: none; }
   color: #241a35;
   font-size: 13px;
   line-height: 1.55;
-  /* border-image 的角是透明的，box-shadow 会照着矩形画，只能用 drop-shadow 贴着实际轮廓 */
-  filter: drop-shadow(0 5px 12px rgba(40, 30, 70, 0.2));
+  /* 发光由 CSS 绘制，避免 9-slice 素材里的阴影随气泡尺寸拉伸变糊。 */
+  filter: none;
+  box-shadow: 0 5px 12px rgba(40, 30, 70, 0.2);
   opacity: 0;
   transform: translateY(6px);
   transition: opacity 0.18s ease, transform 0.18s ease;

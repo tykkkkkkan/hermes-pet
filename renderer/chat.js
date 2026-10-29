@@ -339,13 +339,21 @@ function openSkills() {
 
 async function openTaskModal(files = []) {
   droppedFiles = files.filter(Boolean);
-  const snapshot = await window.pet.getHermesSnapshot();
+  let snapshot = { agents: [], online: false };
+  let offline = false;
+  try {
+    snapshot = await window.pet.getHermesSnapshot();
+    offline = snapshot?.online === false;
+  } catch {
+    offline = true;
+  }
   const assignees = (snapshot.agents || []).map((agent) => agent.name);
   $('task-assignee').innerHTML = (assignees.length ? assignees : ['default'])
     .map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join('');
   $('task-files').textContent = droppedFiles.length
     ? `附件：${droppedFiles.map((file) => file.name).join('、')}`
     : '没有附件，直接创建文字任务';
+  $('task-msg').textContent = offline ? 'Hermes 离线，将使用默认执行端' : '';
   if (!$('task-title').value && droppedFiles[0]) $('task-title').value = `处理：${droppedFiles[0].name}`;
   openPanel('task-modal');
   $('task-title').focus();
@@ -390,7 +398,7 @@ async function submitTask() {
 
 /* --------------------------------- 语音输入 -------------------------------- */
 function setupVoice() {
-  const Engine = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const Engine = window.petLocalAsr?.Recognition || window.SpeechRecognition || window.webkitSpeechRecognition;
   const button = $('voice-btn');
   if (!Engine) {
     window.pet.log('warn', '[asr] unavailable');
@@ -400,6 +408,7 @@ function setupVoice() {
     });
     return;
   }
+  if (window.petLocalAsr) button.title = '本地中文语音输入（首次使用加载模型）';
   recognition = new Engine();
   recognition.lang = 'zh-CN';
   recognition.continuous = false;
