@@ -6,6 +6,8 @@
   "scripts": {
     "start": "electron .",
     "smoke": "node test/e2e/pet-smoke.mjs",
+    "dist": "electron-builder --win",
+    "dist:portable": "electron-builder --win portable",
     "test": "node --test test/memory.test.js test/pet-emotion.test.js test/pet-regions.test.js test/pet-runtime.test.js test/pet-actions.test.js test/pet-interactions.test.js test/pet-faces.test.js test/settings-store.test.js test/pet-speech.test.js test/pet-state.test.js test/bridge-server.test.js test/hermes-poller.test.js",
     "plugin:validate": "hermes plugins validate . --json",
     "fetch:live2d": "node tools/fetch-live2d-assets.js",
@@ -35,10 +37,63 @@
   "devDependencies": {
     "electron": "^45.0.0",
     "jpeg-js": "^0.4.4",
-    "pngjs": "^7.0.0"
+    "pngjs": "^7.0.0",
+    "electron-builder": "^26.18.0"
   },
   "dependencies": {
     "pixi-live2d-display": "^0.4.0",
     "pixi.js": "^6.5.10"
+  },
+  "build": {
+    "appId": "com.tykkkkkkan.hermes-pet",
+    "productName": "hermes-pet",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets/ui"
+    },
+    "files": [
+      "*.js",
+      "*.json",
+      "package.json",
+      "preload.js",
+      "plugin.yaml",
+      "LICENSE",
+      "renderer/**/*",
+      "assets/**/*",
+      "!test/**",
+      "!docs/**",
+      "!tools/**",
+      "!.tmp/**",
+      "!.git/**",
+      "!dist/**",
+      "!*.md",
+      "!CHANGELOG.md",
+      "!assets/states/v2/shot/**",
+      "!assets/states/v2/face/**",
+      "!assets/states/v2/state/**",
+      "!assets/states/v2/state2/**",
+      "!assets/live2d/**"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/ui/hermes-pet.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "赫尔墨兹",
+      "artifactName": "hermes-pet-${version}-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "hermes-pet-${version}-portable.${ext}"
+    }
   }
 }
