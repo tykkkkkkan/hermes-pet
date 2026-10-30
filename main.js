@@ -32,7 +32,9 @@ const ASR_MODEL_FILES = [
   'sherpa-onnx-wasm-main-vad-asr.data',
   'sherpa-onnx-wasm-main-vad-asr.wasm'
 ];
+const UPDATE_PACKAGE_URL = 'https://raw.githubusercontent.com/tykkkkkkan/hermes-pet/main/package.json';
 let asrModelPromise = null;
+let updateCheckPromise = null;
 const logger = require('./logger')({ logDir: path.join(HERMES_DIR, 'logs') });
 const isFrameworkNoise = (args) => {
   const first = String(args[0] || '');
@@ -102,6 +104,51 @@ function ensureAsrModel() {
     });
   }
   return asrModelPromise;
+}
+
+function localDateKey(at = Date.now()) {
+  const date = new Date(at);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+async function checkUpdate(manual = false) {
+  if (updateCheckPromise) return updateCheckPromise;
+  const settings = loadSettings();
+  if (!manual && localDateKey(settings.updateLastCheckedAt) === localDateKey()) {
+    logger.info('[update] 今日已检查，跳过');
+    return { ok: true, skipped: true };
+  }
+  updateCheckPromise = (async () => {
+    saveSettings({ updateLastCheckedAt: Date.now() });
+    try {
+      const response = await net.fetch(UPDATE_PACKAGE_URL, {
+        headers: { 'cache-control': 'no-cache', 'User-Agent': `hermes-pet/${app.getVersion()}` }
+      });
+      if (!response.ok) throw new Error(`远程版本返回 ${response.status}`);
+      const remote = await response.json();
+      const local = app.getVersion();
+      if (!remote?.version || remote.version === local) {
+        logger.info('[update] 已是最新版本', { local });
+        return { ok: true, current: true, local };
+      }
+      announce(`{address}，有新版本 ${remote.version}，我现在是 ${local}，要更新的话去仓库下载`, {
+        kind: 'system', notify: true, userInitiated: manual
+      });
+      logger.info('[update] 发现新版本', { local, remote: remote.version });
+      return { ok: true, update: true, local, remote: remote.version };
+    } catch (error) {
+      logger.warn('[update] 检查更新失败', error?.message || String(error));
+      if (manual) {
+        const message = `检查更新失败：${error?.message || '网络不可用'}`;
+        if (win && !win.isDestroyed()) win.webContents.send('toast', message);
+        else dialog.showMessageBox({ type: 'warning', title: '检查更新', message });
+      }
+      return { ok: false, error: error?.message || String(error) };
+    } finally {
+      updateCheckPromise = null;
+    }
+  })();
+  return updateCheckPromise;
 }
 const PERSONA_FILE = path.join(__dirname, 'persona.json');
 let win = null;
@@ -517,6 +564,7 @@ function createTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '叫她出来', click: () => showPet() },
     { label: '打开 Hermes 对话', click: () => showChat() },
+    { label: '检查更新', click: () => checkUpdate(true) },
     { label: '安静一会儿', click: () => win && win.hide() },
     { type: 'separator' },
     { label: '打开 Hermes 目录', click: () => shell.openPath(HERMES_DIR) },
@@ -863,6 +911,7 @@ if (!gotLock) {
     }
     createWindow();
     createTray();
+    if (process.env.PET_DISABLE_UPDATE_CHECK !== '1') setTimeout(() => checkUpdate(false), 30000);
     startBridgeServer();
     if (process.env.PET_DEV_CRASH_TEST === '1') {
       setTimeout(() => { throw new Error('PET_DEV_CRASH_TEST'); }, 3000);

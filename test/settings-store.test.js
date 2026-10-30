@@ -47,6 +47,13 @@ test('save 会把 petScale 夹在 70 到 140', () => {
   assert.equal(store.save({ petScale: 1 }).petScale, 70);
 });
 
+test('保存更新检查时间并能在下次启动读取', () => {
+  const { store } = makeStore();
+  const stamp = Date.now();
+  store.save({ updateLastCheckedAt: stamp });
+  assert.equal(store.load().updateLastCheckedAt, stamp);
+});
+
 test('没有存储 key 时 getApiKey 返回空字符串', () => {
   const { store } = makeStore();
   assert.equal(store.getApiKey(), '');

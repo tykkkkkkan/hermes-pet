@@ -18,7 +18,8 @@ const DEFAULT_SETTINGS = {
   dndEnabled: false,
   dndStart: '23:30',
   dndEnd: '08:00',
-  dndAllowApproval: true
+  dndAllowApproval: true,
+  updateLastCheckedAt: 0
 };
 
 module.exports = function createSettingsStore({ dataDir, safeStorage, hermesDir, defaults, onSave, logger } = {}) {
@@ -127,7 +128,10 @@ module.exports = function createSettingsStore({ dataDir, safeStorage, hermesDir,
       dndEnabled: input.dndEnabled == null ? !!current.dndEnabled : !!input.dndEnabled,
       dndStart: pickTime(input.dndStart, current.dndStart || '23:30'),
       dndEnd: pickTime(input.dndEnd, current.dndEnd || '08:00'),
-      dndAllowApproval: input.dndAllowApproval == null ? current.dndAllowApproval !== false : !!input.dndAllowApproval
+      dndAllowApproval: input.dndAllowApproval == null ? current.dndAllowApproval !== false : !!input.dndAllowApproval,
+      updateLastCheckedAt: Number.isFinite(Number(input.updateLastCheckedAt))
+        ? Math.max(0, Math.floor(Number(input.updateLastCheckedAt)))
+        : Number(current.updateLastCheckedAt) || 0
     };
     if (input.apiKey && String(input.apiKey).trim()) {
       if (safeStorage?.isEncryptionAvailable?.()) {

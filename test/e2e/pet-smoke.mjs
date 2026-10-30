@@ -6,6 +6,8 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+const require = createRequire(import.meta.url);
+const { PNG } = require('pngjs');
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const PORT = Number((process.argv.find((a) => a.startsWith('--port=')) || '').split('=')[1]) || 9333;
@@ -148,6 +150,14 @@ async function captureClip(cdp, file, clip) {
   return fs.statSync(file).size > 1000;
 }
 
+function inspectPng(file) {
+  const stat = fs.statSync(file);
+  const png = PNG.sync.read(fs.readFileSync(file));
+  let opaque = 0;
+  for (let i = 3; i < png.data.length; i += 4) if (png.data[i] > 8) opaque++;
+  return { bytes: stat.size, width: png.width, height: png.height, opaqueRatio: opaque / (png.width * png.height) };
+}
+
 async function runOnce(runIndex = 1) {
   fs.mkdirSync(ART, { recursive: true });
   if (DASHBOARD_FIXTURE) await startDashboardFixture();
@@ -160,6 +170,7 @@ async function runOnce(runIndex = 1) {
     env: {
       ...process.env,
       ELECTRON_ENABLE_LOGGING: '1',
+      PET_DISABLE_UPDATE_CHECK: '1',
       PET_DISABLE_POLL: DASHBOARD_FIXTURE ? '0' : '1',
       ...(DASHBOARD_FIXTURE ? { LOCALAPPDATA: FIXTURE_LOCALAPPDATA } : {}),
       ...(ISOLATED ? { PET_BRIDGE_FILE: path.join(ROOT, '.tmp', 'smoke-bridge.json') } : {}),
@@ -291,13 +302,44 @@ async function runOnce(runIndex = 1) {
     const seamClip = await evaluate(cdp, `(() => {
       const vp = window.petLive2d?.getViewport?.();
       if (!vp) return null;
-      const cutY = vp.rootY + 258 * vp.scale;
+      const host = document.getElementById('pet-live2d-host')?.getBoundingClientRect();
+      if (!host) return null;
+      const toViewportY = (canvasY) => host.top + canvasY;
+      const toViewportX = (canvasX) => host.left + canvasX;
       const y0 = vp.rootY + 240 * vp.scale;
       const y1 = vp.rootY + 310 * vp.scale;
-      return { x: Math.max(0, vp.rootX - 20), y: Math.max(0, y0), width: Math.min(window.innerWidth, 448 * vp.scale + 40), height: Math.min(window.innerHeight - Math.max(0, y0), y1 - y0), scale: 4 };
+      const x = Math.max(0, toViewportX(vp.rootX) - 20);
+      const y = Math.max(0, toViewportY(y0));
+      return { x, y, width: Math.min(window.innerWidth - x, 448 * vp.scale + 40), height: Math.min(window.innerHeight - y, toViewportY(y1) - toViewportY(y0)), scale: 4 };
     })()`);
     check('切缝放大截图范围正确', !!seamClip && seamClip.height > 0, JSON.stringify(seamClip));
-    if (seamClip) check('切缝放大截图', await captureClip(cdp, path.join(ART, 'neck-cut-zoom-4x.png'), seamClip), 'test/e2e/artifacts/neck-cut-zoom-4x.png');
+    if (seamClip) {
+      const seamFile = path.join(ART, 'neck-cut-zoom-4x.png');
+      await captureClip(cdp, seamFile, seamClip);
+      const seamInfo = inspectPng(seamFile);
+      check('切缝放大图有实际内容', seamInfo.bytes > 20000 && seamInfo.opaqueRatio > 0.05, JSON.stringify(seamInfo));
+    }
+
+    const rotShots = [
+      ['rot-0', 0], ['rot-plus8', 8], ['rot-minus8', -8]
+    ];
+    for (const [label, angle] of rotShots) {
+      await evaluate(cdp, `(() => {
+        window.petLive2d.setState('idle');
+        window.petLive2d.setEmotion('平静');
+        window.petLive2d.playTrack({ rot: [[0, ${angle}], [0.2, ${angle}], [1, ${angle}]], lean: [[0, 0], [1, 0]] }, 700, 1);
+        return true;
+      })()`);
+      await sleep(220);
+      const pose = await evaluate(cdp, 'window.petLive2d.getPose()');
+      check(`${label} rot 到位`, Number.isFinite(pose?.rot) && Math.abs(pose.rot - angle) < 0.6, `实测 ${Number(pose?.rot).toFixed(2)}°`);
+      const file = path.join(ART, `${label}.png`);
+      await capture(cdp, file);
+      const rotInfo = inspectPng(file);
+      check(`${label} 截图`, rotInfo.bytes > 100000, JSON.stringify(rotInfo));
+      if (label !== 'rot-minus8') await sleep(80);
+      await evaluate(cdp, 'window.petLive2d.stopTrack(); true');
+    }
 
     // ---- 5. 热区命中真实坐标 ----
     const hit = await evaluate(cdp, `(() => {
