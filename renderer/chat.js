@@ -399,14 +399,8 @@ async function submitTask() {
 
 /* --------------------------------- 语音输入 -------------------------------- */
 async function setupVoice() {
-  if (window.petLocalAsr?.ready) {
-    try {
-      await window.petLocalAsr.ready;
-      window.pet.log('info', '[asr] local engine ready');
-    } catch (error) {
-      window.pet.log('warn', '[asr] local engine unavailable', error.message || 'unknown');
-    }
-  }
+  // 引擎是懒的，这里不预热：只想打字的人不该先等 92MB 模型下载完。
+  // 真按下语音按钮才 boot（见下面的 click），没人用语音就永远不加载。
   const Engine = window.petLocalAsr?.Recognition || window.SpeechRecognition || window.webkitSpeechRecognition;
   const button = $('voice-btn');
   if (!Engine) {
@@ -476,9 +470,23 @@ async function setupVoice() {
     button.classList.remove('recording');
     button.title = '中文语音输入';
   };
-  button.addEventListener('click', () => {
-    if (listening) recognition.stop();
-    else recognition.start();
+  button.addEventListener('click', async () => {
+    if (listening) { recognition.stop(); return; }
+    if (window.petLocalAsr?.boot && !window.petLocalAsr.booted()) {
+      // 首次要下 92MB 模型，不给提示用户会以为点坏了
+      button.title = '正在准备语音，第一次会慢一点…';
+      $('input').placeholder = '正在准备本地语音，第一次需要下载模型…';
+      try {
+        await window.petLocalAsr.boot();
+        button.title = '正在听… 点一下停止';
+      } catch (error) {
+        window.pet.log('warn', '[asr] local engine unavailable', error.message || 'unknown');
+        button.title = '语音不可用';
+        $('input').placeholder = '本地语音加载失败，先用文字输入';
+        return;
+      }
+    }
+    recognition.start();
   });
 }
 

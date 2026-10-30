@@ -68,7 +68,7 @@
       if (this.running) return;
       this.running = true;
       try {
-        await ready;
+        await boot();
         this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         this.audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
         await this.audioContext.resume();
@@ -123,7 +123,7 @@
   }
 
   async function recognizePcm(samples, sampleRate = SAMPLE_RATE) {
-    await ready;
+    await boot();
     vad.reset();
     const input = downsample(samples, sampleRate);
     const texts = [];
@@ -137,44 +137,64 @@
   }
 
   window.Module = { locateFile: (file) => `${MODEL_BASE}${file}` };
-  window.petLocalAsr = { Recognition: LocalRecognition, ready, recognizePcm };
 
-  window.pet.ensureAsrModel()
-    .then(() => loadScript('sherpa-onnx-asr.js'))
-    .then(() => loadScript('sherpa-onnx-vad.js'))
-    .then(() => new Promise((resolve, reject) => {
-      window.Module.onRuntimeInitialized = () => {
-        try {
-          vad = createVad(window.Module, {
-            sampleRate: SAMPLE_RATE,
-            sileroVad: {
-              model: './silero_vad.onnx', threshold: 0.5,
-              minSilenceDuration: 0.5, minSpeechDuration: 0.25,
-              maxSpeechDuration: 20, windowSize: 512
-            }
-          });
-          recognizer = new OfflineRecognizer({
-            modelConfig: {
-              tokens: './tokens.txt',
-              transducer: {
-                encoder: './transducer-encoder.onnx',
-                decoder: './transducer-decoder.onnx',
-                joiner: './transducer-joiner.onnx'
+  // 启动要干三件重活：下载 92MB 模型、拉两个 WASM 脚本、初始化 VAD 和识别器。
+  // 聊天窗一打开就全干完，等于只想打字的人也被迫等半分钟、还白占内存。
+  // 改成第一次真要用语音才启动：没人碰语音按钮，这套东西永远不加载。
+  let bootPromise = null;
+  function boot() {
+    if (bootPromise) return bootPromise;
+    bootPromise = window.pet.ensureAsrModel()
+      .then(() => loadScript('sherpa-onnx-asr.js'))
+      .then(() => loadScript('sherpa-onnx-vad.js'))
+      .then(() => new Promise((resolve, reject) => {
+        window.Module.onRuntimeInitialized = () => {
+          try {
+            vad = createVad(window.Module, {
+              sampleRate: SAMPLE_RATE,
+              sileroVad: {
+                model: './silero_vad.onnx', threshold: 0.5,
+                minSilenceDuration: 0.5, minSpeechDuration: 0.25,
+                maxSpeechDuration: 20, windowSize: 512
+              }
+            });
+            recognizer = new OfflineRecognizer({
+              modelConfig: {
+                tokens: './tokens.txt',
+                transducer: {
+                  encoder: './transducer-encoder.onnx',
+                  decoder: './transducer-decoder.onnx',
+                  joiner: './transducer-joiner.onnx'
+                },
+                modelType: 'transducer'
               },
-              modelType: 'transducer'
-            },
-            decodingMethod: 'greedy_search'
-          }, window.Module);
-          resolve();
-        } catch (error) {
-          reject(error);
-        }
-      };
-      const script = document.createElement('script');
-      script.src = `${RUNTIME_BASE}sherpa-onnx-wasm-main-vad-asr.js`;
-      script.onerror = () => reject(new Error('本地语音 WASM 加载失败'));
-      document.head.appendChild(script);
-    }))
-    .then(resolveReady)
-    .catch(rejectReady);
+              decodingMethod: 'greedy_search'
+            }, window.Module);
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        };
+        const script = document.createElement('script');
+        script.src = `${RUNTIME_BASE}sherpa-onnx-wasm-main-vad-asr.js`;
+        script.onerror = () => reject(new Error('本地语音 WASM 加载失败'));
+        document.head.appendChild(script);
+      }))
+      .then(resolveReady)
+      .catch((error) => {
+        // 失败要把 bootPromise 清掉，否则一次网络抖动就永久废掉语音入口
+        bootPromise = null;
+        rejectReady(error);
+        throw error;
+      });
+    return bootPromise;
+  }
+
+  window.petLocalAsr = {
+    Recognition: LocalRecognition,
+    recognizePcm,
+    boot,
+    booted: () => Boolean(bootPromise),
+    get ready() { return boot(); }
+  };
 })();

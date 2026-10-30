@@ -31,6 +31,38 @@ let activePoseKey = '';
 let mouseNear = false;
 let irritability = 0;
 let interactionScale = 1;
+// 鼠标一秒能移动上百次，每次写两个 CSS 变量就是上百次样式重算（实测静置 46 秒 4873 次）。
+// 合并到 rAF 里，并且只在真的挪超过半像素时才写，亚像素抖动直接丢掉。
+let lookRaf = 0;
+let lookQueued = null;
+let lookWroteX = 0;
+let lookWroteY = 0;
+
+function pushLook(x, y) {
+  lookQueued = { x, y };
+  if (lookRaf) return;
+  lookRaf = requestAnimationFrame(() => {
+    lookRaf = 0;
+    if (!lookQueued) return;
+    const { x: qx, y: qy } = lookQueued;
+    lookQueued = null;
+    // puppet 模式下 #pet-inner 是 display:none（style.css:176），
+    // 它的 transform 根本不会被绘制，写这两个变量纯属白烧样式重算。
+    // 视线在 puppet 模式交给 PIXI 的 setLook，只有降级回整图模式才需要变量。
+    if (document.body.dataset.live2d !== 'on') {
+      const px = qx * 2.2;
+      const py = qy * 1.8;
+      if (Math.abs(px - lookWroteX) > 0.5 || Math.abs(py - lookWroteY) > 0.5) {
+        lookWroteX = px;
+        lookWroteY = py;
+        petEl.style.setProperty('--look-x', `${px.toFixed(1)}px`);
+        petEl.style.setProperty('--look-y', `${py.toFixed(1)}px`);
+      }
+    }
+    window.petLive2d?.setLook(qx, qy);
+  });
+}
+
 const pokeCounts = { head: 0, face: 0, body: 0, feet: 0 };
 const pokeAt = { head: 0, face: 0, body: 0, feet: 0 };
 const chainTimers = [];
@@ -41,7 +73,7 @@ const CHAINS = {
   taskBlocked: [{ intent: 'panic', delay: 0 }, { intent: 'inspect', delay: 620 }, { intent: 'panic', delay: 560 }]
 };
 function evaluateCurrentBehavior() {
-  behaviorState = window.petBehavior?.evaluateBehavior?.({
+  const next = window.petBehavior?.evaluateBehavior?.({
     affection: Number(latestPetState.affection) || 0,
     energy: Number(latestPetState.energy) || 1,
     idleMs: Date.now() - lastActivityAt,
@@ -49,9 +81,13 @@ function evaluateCurrentBehavior() {
     queue: latestPetState.queue,
     irritability
   }) || 'idle';
-  petEl.dataset.behavior = behaviorState;
-  applyBehaviorPose(window.petBehavior?.BEHAVIOR_CONFIG?.[behaviorState]?.pose || '');
-  return behaviorState;
+  behaviorState = next;
+  // 每次 mousemove 都无条件写 dataset，即使值没变也会触发样式重算
+  // （CSS 里有 [data-behavior] 系列选择器）。实测 200 次鼠标移动带来 305 次样式重算，
+  // 几乎全烧在这里。值没变就不碰 DOM。
+  if (petEl.dataset.behavior !== next) petEl.dataset.behavior = next;
+  applyBehaviorPose(window.petBehavior?.BEHAVIOR_CONFIG?.[next]?.pose || '');
+  return next;
 }
 
 function applyBehaviorPose(poseKey) {
@@ -318,9 +354,7 @@ window.addEventListener('mousemove', (e) => {
   const attention = window.petBehavior?.BEHAVIOR_CONFIG?.[behaviorState]?.attention;
   const attentionX = behaviorState === 'sulky' ? -0.6 : attention === 'task' ? -0.35 : attention === 'none' ? Math.sin(Date.now() / 3400) * 0.6 : lookX;
   const attentionY = behaviorState === 'sulky' ? 0.15 : attention === 'task' ? -0.2 : attention === 'none' ? Math.cos(Date.now() / 2380) * 0.3 : lookY;
-  petEl.style.setProperty('--look-x', `${(attentionX * 2.2).toFixed(1)}px`);
-  petEl.style.setProperty('--look-y', `${(attentionY * 1.8).toFixed(1)}px`);
-  window.petLive2d?.setLook(attentionX, attentionY);
+  pushLook(attentionX, attentionY);
   if (dragging) return;
   updateIgnore(e.clientX, e.clientY);
 });
@@ -639,22 +673,10 @@ function playAction(group, requestedId = '', intent = '') {
   spawnActionEffect(action.effect);
 }
 
-const IDLE_WEIGHTS = {
-  'double-blink': 5, 'look-away': 5, startle: 4, 'slow-yawn': 2,
-  'heel-tap': 3, 'side-brace': 2, 'jelly-bounce': 1, 'quick-hop': 1,
-  cheer: 1, 'sparkle-cast': 1, 'hat-check': 2, 'soft-lean': 3,
-  'proud-bow': 1, 'cape-flick': 2, stumble: 1
-};
-function pickIdleAction(previousId) {
-  const entries = Object.entries(IDLE_WEIGHTS).filter(([id]) => id !== previousId);
-  const total = entries.reduce((sum, [, weight]) => sum + weight, 0);
-  let roll = Math.random() * total;
-  for (const [id, weight] of entries) {
-    roll -= weight;
-    if (roll <= 0) return id;
-  }
-  return entries[0]?.[0] || '';
-}
+/* ---------------- 待机动作 ---------------- */
+// 这里原本还有一套 IDLE_WEIGHTS + pickIdleAction 的加权抽签，
+// 但待机实际走的是 chooseAction('all', groomingId, intent)——它已经按情绪和意图加权，
+// 两套权重并存时后者永远赢，前者是死代码。删掉，别让人以为改它能影响待机。
 
 function idleLoop() {
   evaluateCurrentBehavior();

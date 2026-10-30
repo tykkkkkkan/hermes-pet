@@ -487,12 +487,15 @@ async function runOnce(runIndex = 1) {
           window.petLive2d.playTrack(action.tracks, action.duration, 1);
           const samples = [];
           const started = performance.now();
-          while (performance.now() - started < action.duration + 200) {
+          // 采样密度要压过帧率：30ms 一次时最短的动作（540ms）只有 18 个采样点，
+          // 峰值经常被跳过，同一份代码三次跑出三种结果。改成 16ms 一次、窗口放宽到 +300ms。
+          while (performance.now() - started < action.duration + 300) {
             samples.push({ t: performance.now() - started, pose: window.petLive2d.getPose() });
-            await wait(30);
+            await wait(16);
           }
           const maxDev = Math.max(...samples.slice(1).map((sample) => Math.max(...['rot', 'dy', 'eye', 'mouth', 'lean', 'jump'].map((key) => Math.abs((sample.pose[key] || 0) - (before[key] || 0))))));
-          out.push({ id: action.id, declared: action.duration, duration: (action.duration / 1000) + 's', animation: 'puppet-track', deltaTop: 0, deltaLeft: 0, moved: maxDev > 0.5, maxDev, puppet: true });
+          // 0.5 对幅度小的动作（startle 只转 3 度）太贴边；0.3 仍远超静止抖动（实测 <0.05）
+          out.push({ id: action.id, declared: action.duration, duration: (action.duration / 1000) + 's', animation: 'puppet-track', deltaTop: 0, deltaLeft: 0, moved: maxDev > 0.3, maxDev, puppet: true });
           window.petLive2d.stopTrack();
           await wait(20);
           continue;
@@ -509,13 +512,13 @@ async function runOnce(runIndex = 1) {
         const firstStyle = getComputedStyle(gesture);
         const samples = [];
         const started = performance.now();
-        while (performance.now() - started < action.duration + 200) {
+        while (performance.now() - started < action.duration + 300) {
           const rect = gesture.getBoundingClientRect();
           samples.push({ top: rect.top, left: rect.left });
-          await wait(30);
+          await wait(16);
         }
         const maxDev = Math.max(...samples.slice(1).map((sample) => Math.abs(sample.top - before.top) + Math.abs(sample.left - before.left)));
-        out.push({ id: action.id, declared: action.duration, duration: firstStyle.animationDuration, animation: firstStyle.animationName, deltaTop: maxDev, deltaLeft: 0, moved: maxDev > 0.5, maxDev });
+        out.push({ id: action.id, declared: action.duration, duration: firstStyle.animationDuration, animation: firstStyle.animationName, deltaTop: maxDev, deltaLeft: 0, moved: maxDev > 0.3, maxDev });
         gesture.classList.remove('gesture-active');
         delete gesture.dataset.action;
         gesture.style.removeProperty('animation-duration');

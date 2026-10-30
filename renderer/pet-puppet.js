@@ -403,8 +403,10 @@
       }
     }
 
-    // 每 30 帧校正一次尺寸：跨屏 DPI 变化、窗口被系统微调时不一定有 resize 事件
-    if ((tick.frames = (tick.frames || 0) + 1) % 30 === 0) fit();
+    // 尺寸校正：跨屏 DPI 变化、窗口被系统微调时不一定有 resize 事件，
+    // 但每 30 帧（半秒两次）调一次 fit 意味着每秒两次强制 layout。
+    // DPI 和宿主尺寸都不是高频变化的，降到每 120 帧（约 2 秒）足够，还留着兜底能力。
+    if ((tick.frames = (tick.frames || 0) + 1) % 120 === 0) fit();
 
     springTo('rot', target.rot, 0.17, 0.74);
     springTo('dy', target.dy, 0.16, 0.73);
