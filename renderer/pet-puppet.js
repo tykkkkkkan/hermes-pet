@@ -28,6 +28,7 @@
   let bodySprite = null, headSprite = null, eyesSprite = null, mouthSprite = null;
   let shadowSprite = null;
   const shadowScale = { x: 1, y: 1 };
+  let viewport = { width: 0, height: 0, scale: 1, rootX: 0, rootY: 0, shadowPad: 0 };
   let meta = null;
   let ready = false;
   let state = 'idle';
@@ -230,7 +231,10 @@
     root.scale.set(s);
     // 脚底留一条屏幕空间给投影，否则影子会被窗口裁掉，角色又回到"浮着"的状态
     const shadowPad = Math.max(9, ch * s * 0.026);
-    root.position.set(w / 2 - (cw * s) / 2, h - ch * s - shadowPad);
+    const rootX = w / 2 - (cw * s) / 2;
+    const rootY = h - ch * s - shadowPad;
+    root.position.set(rootX, rootY);
+    viewport = { width: w, height: h, scale: s, rootX, rootY, shadowPad };
 
     // 特效层挂在 stage 上，用屏幕像素定位：符号永远贴在角色右上方，不随缩放漂移
     MOOD_HOME.x = w - Math.max(40, w * 0.13);
@@ -486,6 +490,20 @@
       if (next === 'error') spawnFx('sweat', { scale: 0.3, vy: -0.4, g: 0.03 });
     },
     getState: () => state,
+    getViewport: () => ({ ...viewport }),
+    getPose: () => {
+      const track = sampleTrack(performance.now());
+      return {
+      rot: cur.rot + emotionBias.rot + imp.rot + (track.rot || 0),
+      dy: cur.dy + imp.dy + (track.dy || 0),
+      eye: cur.eye + emotionBias.eye + (track.eye || 0),
+      mouth: cur.mouth + emotionBias.mouth + (track.mouth || 0),
+      breath: cur.breath * emotionBias.breath,
+      lean: cur.lean + emotionBias.lean + imp.lean + (track.lean || 0),
+      jump: imp.jump + (track.jump || 0),
+      scale: root?.scale?.x || 1
+      };
+    },
     setLook(x, y) {
       lookX = clamp(x, -1, 1);
       lookY = clamp(y, -1, 1);

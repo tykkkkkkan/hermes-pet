@@ -1,0 +1,10 @@
+{
+  "source": "1024x1024 state-idle -> 448x841 pet-layers",
+  "scale": 1,
+  "offsetX": -288,
+  "offsetY": -138,
+  "footY": 972,
+  "note": "以 build-pet-layers.js 的统一画布为基准；state-idle 逐像素 RGB 平均误差必须小于 3",
+  "meanRgb": 1.7869681610885966,
+  "comparedPixels": 189014
+}

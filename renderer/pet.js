@@ -611,15 +611,21 @@ function playAction(group, requestedId = '', intent = '') {
   clearGesture();
   lastActionId = action.id;
   gestureEl.dataset.action = action.id;
-  // 直接写带单位的内联值；当前 Electron 对 calc(var(--x) * 1ms) 会求值成 0s。
-  gestureEl.style.animationDuration = `${action.duration}ms`;
-  void gestureEl.offsetWidth;
-  gestureEl.classList.add('gesture-active');
   const puppetActive = window.petLive2d?.isReady?.() && action.tracks;
   if (puppetActive) {
-    // Puppet 接管骨骼时，CSS 仍保留为隐藏静态层的回退和 smoke 可观测标记。
     window.petLive2d.playTrack(action.tracks, action.duration,
       Math.max(0.7, (Number(latestPetState.energy) || 1) * interactionScale));
+    gestureTimer = setTimeout(clearGesture, action.duration + 120);
+  } else {
+    // 直接写带单位的内联值；当前 Electron 对 calc(var(--gesture-ms) * 1ms) 会求值成 0s。
+    gestureEl.style.animationDuration = `${action.duration}ms`;
+    void gestureEl.offsetWidth;
+    gestureEl.classList.add('gesture-active');
+    gestureAnimationHandler = (event) => {
+      if (event.target === gestureEl && event.animationName === action.animation) clearGesture();
+    };
+    gestureEl.addEventListener('animationend', gestureAnimationHandler);
+    gestureTimer = setTimeout(clearGesture, action.duration + 120);
   }
   if (petInner) {
     petInner.style.transition = 'none';
@@ -631,11 +637,6 @@ function playAction(group, requestedId = '', intent = '') {
     }, 60);
   }
   spawnActionEffect(action.effect);
-  gestureAnimationHandler = (event) => {
-    if (event.target === gestureEl && event.animationName === action.animation) clearGesture();
-  };
-  gestureEl.addEventListener('animationend', gestureAnimationHandler);
-  gestureTimer = setTimeout(clearGesture, action.duration + 120);
 }
 
 const IDLE_WEIGHTS = {

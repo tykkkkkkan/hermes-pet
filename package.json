@@ -12,7 +12,9 @@
     "plugin:validate": "hermes plugins validate . --json",
     "fetch:live2d": "node tools/fetch-live2d-assets.js",
     "analyze:layers": "node tools/analyze-layers.js",
-    "build:layers": "node tools/build-pet-layers.js"
+    "build:layers": "node tools/build-pet-layers.js",
+    "align:pose": "node tools/align-pose.js",
+    "normalize:poses": "node tools/normalize-poses.js"
   },
   "keywords": [
     "desktop-pet",

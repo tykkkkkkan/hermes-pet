@@ -141,6 +141,12 @@ async function capture(cdp, file) {
   return fs.statSync(file).size > 5000;
 }
 
+async function captureClip(cdp, file, clip) {
+  const shot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false, clip });
+  fs.writeFileSync(file, Buffer.from(shot.data, 'base64'));
+  return fs.statSync(file).size > 1000;
+}
+
 async function main() {
   fs.mkdirSync(ART, { recursive: true });
   if (DASHBOARD_FIXTURE) await startDashboardFixture();
@@ -255,6 +261,40 @@ async function main() {
       })));
     })()`);
     check('七张行为姿态素材全部加载', poses?.length === 7 && poses.every((pose) => pose.ok), JSON.stringify(poses));
+
+    const poseBoxes = await evaluate(cdp, `(() => {
+      const pose = document.getElementById('pet-pose')?.getBoundingClientRect();
+      const canvas = document.querySelector('#pet-live2d-host canvas')?.getBoundingClientRect();
+      if (!pose || !canvas) return { available: false, pose, canvas };
+      const keys = ['width', 'height', 'top', 'left'];
+      const delta = Object.fromEntries(keys.map((key) => [key, Math.abs(pose[key] - canvas[key])]));
+      return { available: true, pose: { width: pose.width, height: pose.height, top: pose.top, left: pose.left }, canvas: { width: canvas.width, height: canvas.height, top: canvas.top, left: canvas.left }, delta };
+    })()`);
+    check('姿态层和 canvas 盒子一致', poseBoxes?.available
+      && Object.values(poseBoxes.delta).every((value) => value <= 2), JSON.stringify(poseBoxes));
+
+    for (const scale of [80, 140]) {
+      await evaluate(cdp, `window.pet.saveSettings({ petScale: ${scale} })`);
+      await sleep(180);
+      const box = await evaluate(cdp, `(() => {
+        const pose = document.getElementById('pet-pose')?.getBoundingClientRect();
+        const canvas = document.querySelector('#pet-live2d-host canvas')?.getBoundingClientRect();
+        if (!pose || !canvas) return { scale: ${scale}, available: false };
+        return { scale: ${scale}, available: true, delta: { width: Math.abs(pose.width - canvas.width), height: Math.abs(pose.height - canvas.height), top: Math.abs(pose.top - canvas.top), left: Math.abs(pose.left - canvas.left) } };
+      })()`);
+      check(`petScale ${scale}% 姿态仍对齐`, box?.available && Object.values(box.delta).every((value) => value <= 2), JSON.stringify(box));
+      check(`petScale ${scale}% 截图`, await capture(cdp, path.join(ART, `pet-pose-${scale}.png`)), `test/e2e/artifacts/pet-pose-${scale}.png`);
+    }
+    await evaluate(cdp, `window.pet.saveSettings({ petScale: 100 }); true`);
+    await sleep(180);
+    const seamClip = await evaluate(cdp, `(() => {
+      const vp = window.petLive2d?.getViewport?.();
+      if (!vp) return null;
+      const cutY = vp.rootY + 258 * vp.scale;
+      return { x: Math.max(0, vp.rootX - 20), y: Math.max(0, cutY - 30), width: Math.min(window.innerWidth, 448 * vp.scale + 40), height: 60, scale: 4 };
+    })()`);
+    check('切缝放大截图范围正确', !!seamClip && seamClip.height === 60, JSON.stringify(seamClip));
+    if (seamClip) check('切缝放大截图', await captureClip(cdp, path.join(ART, 'neck-cut-zoom-4x.png'), seamClip), 'test/e2e/artifacts/neck-cut-zoom-4x.png');
 
     // ---- 5. 热区命中真实坐标 ----
     const hit = await evaluate(cdp, `(() => {
@@ -376,13 +416,18 @@ async function main() {
       window.dispatchEvent(new MouseEvent('mousemove', event));
       area.dispatchEvent(new MouseEvent('mousedown', event));
       window.dispatchEvent(new MouseEvent('mouseup', event));
-      const immediate = { action: document.getElementById('pet-gesture').dataset.action || '', active: document.getElementById('pet-gesture').classList.contains('gesture-active') };
+      const action = window.pet.actions.find((item) => item.id === document.getElementById('pet-gesture').dataset.action);
+      const puppet = !!window.petLive2d?.isReady?.() && !!action?.tracks;
+      const poseBefore = puppet ? window.petLive2d.getPose() : null;
+      const immediate = { action: document.getElementById('pet-gesture').dataset.action || '', active: document.getElementById('pet-gesture').classList.contains('gesture-active'), puppet, poseBefore };
       const before = document.getElementById('pet-gesture').getBoundingClientRect();
       await new Promise(r => setTimeout(r, 70));
       const gesture = document.getElementById('pet-gesture');
       const after = gesture.getBoundingClientRect();
       const style = getComputedStyle(gesture);
-      return { immediate, stateActive: document.getElementById('pet-state').className, action: gesture.dataset.action || '', active: gesture.classList.contains('gesture-active'), iteration: style.animationIterationCount, animation: style.animationName, duration: style.animationDuration, moved: Math.abs(after.top - before.top) + Math.abs(after.left - before.left) > 0.5, delta: { top: after.top - before.top, left: after.left - before.left } };
+      const poseAfter = puppet ? window.petLive2d.getPose() : null;
+      const poseMoved = puppet && poseBefore && poseAfter && ['rot', 'dy', 'eye', 'mouth', 'lean', 'jump'].some((key) => Math.abs((poseAfter[key] || 0) - (poseBefore[key] || 0)) > 0.02);
+      return { immediate, stateActive: document.getElementById('pet-state').className, action: gesture.dataset.action || '', active: gesture.classList.contains('gesture-active'), iteration: style.animationIterationCount, animation: style.animationName, duration: style.animationDuration, moved: puppet ? !!poseMoved : Math.abs(after.top - before.top) + Math.abs(after.left - before.left) > 0.5, delta: { top: after.top - before.top, left: after.left - before.left }, poseAfter };
     })()`);
 
     const allActionPlayback = await evaluate(cdp, `(async () => {
@@ -391,6 +436,17 @@ async function main() {
       const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const out = [];
       for (const action of actions) {
+        const puppet = !!window.petLive2d?.isReady?.() && !!action.tracks;
+        if (puppet) {
+          const before = window.petLive2d.getPose();
+          window.petLive2d.playTrack(action.tracks, action.duration, 1);
+          await wait(Math.max(120, Math.min(400, action.duration * 0.4)));
+          const after = window.petLive2d.getPose();
+          out.push({ id: action.id, declared: action.duration, duration: (action.duration / 1000) + 's', animation: 'puppet-track', deltaTop: 0, deltaLeft: 0, moved: ['rot', 'dy', 'eye', 'mouth', 'lean', 'jump'].some((key) => Math.abs((after[key] || 0) - (before[key] || 0)) > 0.02), puppet: true });
+          window.petLive2d.stopTrack();
+          await wait(20);
+          continue;
+        }
         gesture.classList.remove('gesture-active');
         delete gesture.dataset.action;
         gesture.style.removeProperty('animation-duration');
@@ -417,24 +473,49 @@ async function main() {
     check('十五个动作逐个有非零时长并产生位移', allActionPlayback?.length === 15 && allActionPlayback.every((item) => Number.parseFloat(item.duration) > 0.1 && item.moved), JSON.stringify(allActionPlayback));
 
     const headAction = await triggerZone('head');
-    check('点头动作单次播放且不抢呼吸', headAction?.immediate?.active && headAction.immediate?.action && headAction.iteration === '1' && Number.parseFloat(headAction.duration) > 0.1 && headAction.moved, JSON.stringify(headAction));
+    check('点头动作单次播放且不抢呼吸', headAction?.immediate?.action && (headAction.immediate?.puppet
+      ? headAction.immediate.puppet && headAction.moved
+      : headAction.immediate.active && headAction.iteration === '1' && Number.parseFloat(headAction.duration) > 0.1 && headAction.moved), JSON.stringify(headAction));
     check('点头截图', await capture(cdp, path.join(ART, 'pet-action-head.png')), 'test/e2e/artifacts/pet-action-head.png');
 
     const feetAction = await triggerZone('feet');
-    check('点脚动作单次播放', feetAction?.immediate?.active && feetAction?.immediate?.action && feetAction.iteration === '1' && Number.parseFloat(feetAction.duration) > 0.1 && feetAction.moved, JSON.stringify(feetAction));
+    check('点脚动作单次播放', feetAction?.immediate?.action && (feetAction.immediate?.puppet
+      ? feetAction.immediate.puppet && feetAction.moved
+      : feetAction.immediate.active && feetAction.iteration === '1' && Number.parseFloat(feetAction.duration) > 0.1 && feetAction.moved), JSON.stringify(feetAction));
     check('点脚截图', await capture(cdp, path.join(ART, 'pet-action-feet.png')), 'test/e2e/artifacts/pet-action-feet.png');
+
+    const offsetSamples = await evaluate(cdp, `(async () => {
+      const action = window.pet.actions.find((item) => item.id === 'hat-check');
+      window.petLive2d.playTrack(action.tracks, action.duration, 1);
+      const started = performance.now(); const rows = [];
+      while (performance.now() - started <= action.duration + 80) {
+        const pose = window.petLive2d.getPose();
+        rows.push({ t: performance.now() - started, rot: pose.rot, lean: pose.lean });
+        await new Promise((resolve) => setTimeout(resolve, 70));
+      }
+      window.petLive2d.stopTrack();
+      const peak = (key) => rows.reduce((best, row) => Math.abs(row[key]) > Math.abs(best[key]) ? row : best, rows[0]);
+      const rotPeak = peak('rot'); const leanPeak = peak('lean');
+      return { rotPeak, leanPeak, deltaMs: Math.abs(rotPeak.t - leanPeak.t), samples: rows.length };
+    })()`);
+    check('动作 rot 与 lean 峰值错峰至少 70ms', offsetSamples?.deltaMs >= 70, JSON.stringify(offsetSamples));
 
     await evaluate(cdp, `window.pet.setStatus('working'); true`);
     await sleep(60);
     const workingAction = await triggerZone('body');
     const stateDuringAction = await evaluate(cdp, `(() => { const state = document.getElementById('pet-state'); const gesture = document.getElementById('pet-gesture'); return { working: state.classList.contains('working'), active: gesture.classList.contains('gesture-active'), iteration: getComputedStyle(gesture).animationIterationCount }; })()`);
-    check('工作状态下动作不变成无限循环', workingAction?.immediate?.active && stateDuringAction?.iteration === '1', JSON.stringify({ workingAction, stateDuringAction }));
+    check('工作状态下动作不变成无限循环', workingAction?.immediate?.action
+      && (workingAction.immediate.puppet
+        ? workingAction.immediate.puppet && workingAction.moved && !workingAction.immediate.active
+        : workingAction.immediate.active && stateDuringAction?.iteration === '1'), JSON.stringify({ workingAction, stateDuringAction }));
 
     await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
     const reduced = await triggerZone('face');
     await sleep(120);
-    const reducedAfter = await evaluate(cdp, `document.getElementById('pet-gesture').classList.contains('gesture-active')`);
-    check('减少动态下动作能降级并清理', reduced?.immediate?.active && reduced?.iteration === '1' && reducedAfter === false, JSON.stringify({ reduced, reducedAfter }));
+    const reducedAfter = await evaluate(cdp, `({ cssActive: document.getElementById('pet-gesture').classList.contains('gesture-active'), track: window.__petPuppetDebug?.().track || null })`);
+    check('减少动态下动作能降级并清理', reduced?.immediate?.puppet
+      ? reduced.moved && !reduced.immediate.active
+      : reduced?.immediate?.active && reduced?.iteration === '1' && reducedAfter.cssActive === false, JSON.stringify({ reduced, reducedAfter }));
     await cdp.send('Emulation.setEmulatedMedia', { features: [] });
     await evaluate(cdp, `window.pet.setStatus('idle'); true`);
 

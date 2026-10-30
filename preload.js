@@ -13,6 +13,7 @@ const readJson = (file) => {
 };
 const legacy = readJson(legacyManifest);
 const v2File = (group, name) => `../assets/states/v2/aligned/${group}/${name}.png`;
+const poseFile = (name) => `../assets/pet-layers/pose/${name}.png`;
 const defaultFaceFiles = Object.fromEntries(
   Object.entries(FACE_FILES).map(([key, name]) => [key, v2File('face', name)])
 );
@@ -30,13 +31,13 @@ const stateSources = {
   error: v2File('state', 'state-error')
 };
 const poseSources = {
-  annoyed: v2File('state', 'state-annoyed'),
-  wave: v2File('state', 'pose-wave'),
-  point: v2File('state', 'pose-point'),
-  side: v2File('state', 'pose-side'),
-  back: v2File('state', 'pose-back'),
-  trust: v2File('state', 'pose-trust'),
-  walkContact: v2File('state', 'walk-contact')
+  annoyed: poseFile('pose-annoyed'),
+  wave: poseFile('pose-wave'),
+  point: poseFile('pose-point'),
+  side: poseFile('pose-side'),
+  back: poseFile('pose-back'),
+  trust: poseFile('pose-trust'),
+  walkContact: poseFile('pose-walk')
 };
 const hasV2 = fs.existsSync(v2Manifest);
 
