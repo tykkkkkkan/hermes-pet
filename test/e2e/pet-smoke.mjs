@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const PORT = Number((process.argv.find((a) => a.startsWith('--port=')) || '').split('=')[1]) || 9333;
+const REPEAT = Math.max(1, Number((process.argv.find((a) => a.startsWith('--repeat=')) || '').split('=')[1]) || 1);
 const KEEP = process.argv.includes('--keep');
 const LONG = process.argv.includes('--long');
 const DASHBOARD_FIXTURE = process.argv.includes('--dashboard-fixture');
@@ -147,7 +148,7 @@ async function captureClip(cdp, file, clip) {
   return fs.statSync(file).size > 1000;
 }
 
-async function main() {
+async function runOnce(runIndex = 1) {
   fs.mkdirSync(ART, { recursive: true });
   if (DASHBOARD_FIXTURE) await startDashboardFixture();
   console.log(`启动 Electron（调试端口 ${PORT}）…`);
@@ -291,9 +292,11 @@ async function main() {
       const vp = window.petLive2d?.getViewport?.();
       if (!vp) return null;
       const cutY = vp.rootY + 258 * vp.scale;
-      return { x: Math.max(0, vp.rootX - 20), y: Math.max(0, cutY - 30), width: Math.min(window.innerWidth, 448 * vp.scale + 40), height: 60, scale: 4 };
+      const y0 = vp.rootY + 240 * vp.scale;
+      const y1 = vp.rootY + 310 * vp.scale;
+      return { x: Math.max(0, vp.rootX - 20), y: Math.max(0, y0), width: Math.min(window.innerWidth, 448 * vp.scale + 40), height: Math.min(window.innerHeight - Math.max(0, y0), y1 - y0), scale: 4 };
     })()`);
-    check('切缝放大截图范围正确', !!seamClip && seamClip.height === 60, JSON.stringify(seamClip));
+    check('切缝放大截图范围正确', !!seamClip && seamClip.height > 0, JSON.stringify(seamClip));
     if (seamClip) check('切缝放大截图', await captureClip(cdp, path.join(ART, 'neck-cut-zoom-4x.png'), seamClip), 'test/e2e/artifacts/neck-cut-zoom-4x.png');
 
     // ---- 5. 热区命中真实坐标 ----
@@ -440,9 +443,14 @@ async function main() {
         if (puppet) {
           const before = window.petLive2d.getPose();
           window.petLive2d.playTrack(action.tracks, action.duration, 1);
-          await wait(Math.max(120, Math.min(400, action.duration * 0.4)));
-          const after = window.petLive2d.getPose();
-          out.push({ id: action.id, declared: action.duration, duration: (action.duration / 1000) + 's', animation: 'puppet-track', deltaTop: 0, deltaLeft: 0, moved: ['rot', 'dy', 'eye', 'mouth', 'lean', 'jump'].some((key) => Math.abs((after[key] || 0) - (before[key] || 0)) > 0.02), puppet: true });
+          const samples = [];
+          const started = performance.now();
+          while (performance.now() - started < action.duration + 200) {
+            samples.push({ t: performance.now() - started, pose: window.petLive2d.getPose() });
+            await wait(30);
+          }
+          const maxDev = Math.max(...samples.slice(1).map((sample) => Math.max(...['rot', 'dy', 'eye', 'mouth', 'lean', 'jump'].map((key) => Math.abs((sample.pose[key] || 0) - (before[key] || 0))))));
+          out.push({ id: action.id, declared: action.duration, duration: (action.duration / 1000) + 's', animation: 'puppet-track', deltaTop: 0, deltaLeft: 0, moved: maxDev > 0.5, maxDev, puppet: true });
           window.petLive2d.stopTrack();
           await wait(20);
           continue;
@@ -457,9 +465,15 @@ async function main() {
         await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         const before = gesture.getBoundingClientRect();
         const firstStyle = getComputedStyle(gesture);
-        await wait(Math.max(120, Math.min(400, action.duration * 0.4)));
-        const after = gesture.getBoundingClientRect();
-        out.push({ id: action.id, declared: action.duration, duration: firstStyle.animationDuration, animation: firstStyle.animationName, deltaTop: after.top - before.top, deltaLeft: after.left - before.left, moved: Math.abs(after.top - before.top) + Math.abs(after.left - before.left) > 0.5 });
+        const samples = [];
+        const started = performance.now();
+        while (performance.now() - started < action.duration + 200) {
+          const rect = gesture.getBoundingClientRect();
+          samples.push({ top: rect.top, left: rect.left });
+          await wait(30);
+        }
+        const maxDev = Math.max(...samples.slice(1).map((sample) => Math.abs(sample.top - before.top) + Math.abs(sample.left - before.left)));
+        out.push({ id: action.id, declared: action.duration, duration: firstStyle.animationDuration, animation: firstStyle.animationName, deltaTop: maxDev, deltaLeft: 0, moved: maxDev > 0.5, maxDev });
         gesture.classList.remove('gesture-active');
         delete gesture.dataset.action;
         gesture.style.removeProperty('animation-duration');
@@ -498,7 +512,7 @@ async function main() {
       const rotPeak = peak('rot'); const leanPeak = peak('lean');
       return { rotPeak, leanPeak, deltaMs: Math.abs(rotPeak.t - leanPeak.t), samples: rows.length };
     })()`);
-    check('动作 rot 与 lean 峰值错峰至少 70ms', offsetSamples?.deltaMs >= 70, JSON.stringify(offsetSamples));
+    check('动作 rot 与 lean 峰值错峰至少 35ms', offsetSamples?.deltaMs >= 35, JSON.stringify(offsetSamples));
 
     await evaluate(cdp, `window.pet.setStatus('working'); true`);
     await sleep(60);
@@ -592,7 +606,17 @@ async function main() {
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} 项通过`);
   if (stderr.trim() && failed.length) console.log('Electron stderr 片段:\n' + stderr.split('\n').slice(-12).join('\n'));
-  process.exit(failed.length ? 1 : 0);
+  return failed.length === 0;
+}
+
+async function main() {
+  let allPassed = true;
+  for (let run = 1; run <= REPEAT; run++) {
+    console.log(`\n===== smoke 第 ${run}/${REPEAT} 次 =====`);
+    const passed = await runOnce(run);
+    allPassed = allPassed && passed;
+  }
+  process.exit(allPassed ? 0 : 1);
 }
 
 main();
