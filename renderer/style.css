@@ -182,6 +182,26 @@ body[data-live2d="on"] #pet-state.error,
 body[data-live2d="on"] #pet-state.sleep,
 body[data-live2d="on"] #pet-state.drowsy { animation: none; }
 
+/* 整图姿态是行为状态的视觉大动作，短暂让位给 Puppet，进出均交叉淡化。 */
+.pose-layer {
+  position: absolute;
+  left: 50%;
+  bottom: -17px;
+  display: block;
+  width: 374px;
+  height: 374px;
+  margin-left: -187px;
+  pointer-events: none;
+  -webkit-user-drag: none;
+  opacity: 0;
+  transition: opacity .2s ease;
+  z-index: 2;
+}
+.pose-layer.pose-active { opacity: 1; }
+body[data-pose-active="true"] #pet-live2d-host,
+body[data-pose-active="true"] #pet-state { opacity: 0; }
+body[data-pose-active="true"] #pet-live2d-host { transition: opacity .2s ease; }
+
 .pet-halo {
   mix-blend-mode: screen;
   opacity: .55;

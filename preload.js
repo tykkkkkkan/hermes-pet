@@ -29,6 +29,15 @@ const stateSources = {
   sleep: v2File('state', 'state-sleepy'),
   error: v2File('state', 'state-error')
 };
+const poseSources = {
+  annoyed: v2File('state', 'state-annoyed'),
+  wave: v2File('state', 'pose-wave'),
+  point: v2File('state', 'pose-point'),
+  side: v2File('state', 'pose-side'),
+  back: v2File('state', 'pose-back'),
+  trust: v2File('state', 'pose-trust'),
+  walkContact: v2File('state', 'walk-contact')
+};
 const hasV2 = fs.existsSync(v2Manifest);
 
 contextBridge.exposeInMainWorld('pet', {
@@ -40,6 +49,7 @@ contextBridge.exposeInMainWorld('pet', {
   faceSources,
   faceMaps: { emotion: EMOTION_FACE, state: STATE_FACE },
   stateSources: hasV2 ? stateSources : {},
+  poseSources: hasV2 ? poseSources : {},
   setIgnore: (ignore) => ipcRenderer.send('set-ignore', ignore),
   openMenu: () => ipcRenderer.send('open-menu'),
   closeMenu: () => ipcRenderer.send('close-menu'),

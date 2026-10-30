@@ -1,13 +1,13 @@
 const BEHAVIOR_CONFIG = {
   sleeping: { minMs: Infinity, maxMs: Infinity, intents: [], attention: 'none', face: 'sleepy' },
-  drowsy: { minMs: 9000, maxMs: 16000, intents: ['settle'], attention: 'mouse', face: 'sleepy' },
+  drowsy: { minMs: 9000, maxMs: 16000, intents: ['settle'], attention: 'mouse', face: 'sleepy', pose: 'trust' },
   idle: { minMs: 3500, maxMs: 8000, intents: [], attention: 'mouse' },
-  curious: { minMs: 2200, maxMs: 5000, intents: ['inspect', 'settle'], attention: 'mouse' },
-  focused: { minMs: 5000, maxMs: 9000, intents: ['settle'], attention: 'task', face: 'thinking' },
-  worried: { minMs: 1800, maxMs: 3200, intents: ['panic', 'withdraw'], attention: 'task' },
+  curious: { minMs: 2200, maxMs: 5000, intents: ['inspect', 'settle'], attention: 'mouse', pose: 'side' },
+  focused: { minMs: 5000, maxMs: 9000, intents: ['settle'], attention: 'task', face: 'thinking', pose: 'point' },
+  worried: { minMs: 1800, maxMs: 3200, intents: ['panic', 'withdraw'], attention: 'task', pose: 'annoyed' },
   pleased: { minMs: 1500, maxMs: 3000, intents: ['celebrate'], attention: 'mouse', face: 'happy' },
-  sulky: { minMs: 4000, maxMs: 7000, intents: ['withdraw'], attention: 'none' },
-  clingy: { minMs: 2000, maxMs: 4500, intents: ['seek', 'settle'], attention: 'mouse', face: 'happy' }
+  sulky: { minMs: 4000, maxMs: 7000, intents: ['withdraw'], attention: 'none', pose: 'back' },
+  clingy: { minMs: 2000, maxMs: 4500, intents: ['seek', 'settle'], attention: 'mouse', face: 'happy', pose: 'wave' }
 };
 function evaluateBehavior({ affection, energy, idleMs, mouseNear, queue, irritability }) {
   const blocked = (queue?.blocked || 0) > 0;

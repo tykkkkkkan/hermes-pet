@@ -3,6 +3,8 @@ const petBody = document.getElementById('pet-body');
 const petFace = document.getElementById('pet-face');
 const petFaceAlt = document.getElementById('pet-face-alt');
 const petInner = document.getElementById('pet-inner-b');
+const poseLayer = document.getElementById('pet-pose');
+const poseLayerAlt = document.getElementById('pet-pose-alt');
 const stateEl = document.getElementById('pet-state');
 const gestureEl = document.getElementById('pet-gesture');
 const petHitArea = document.getElementById('pet-hit-area');
@@ -24,6 +26,8 @@ const panelAgents = document.getElementById('panel-agents');
 const panelTasks = document.getElementById('panel-tasks');
 let latestPetState = {};
 let behaviorState = 'idle';
+let activePoseLayer = poseLayer;
+let activePoseKey = '';
 let mouseNear = false;
 let irritability = 0;
 let interactionScale = 1;
@@ -46,7 +50,34 @@ function evaluateCurrentBehavior() {
     irritability
   }) || 'idle';
   petEl.dataset.behavior = behaviorState;
+  applyBehaviorPose(window.petBehavior?.BEHAVIOR_CONFIG?.[behaviorState]?.pose || '');
   return behaviorState;
+}
+
+function applyBehaviorPose(poseKey) {
+  const src = window.pet.poseSources?.[poseKey] || '';
+  if (!src) {
+    if (activePoseKey) {
+      poseLayer?.classList.remove('pose-active');
+      poseLayerAlt?.classList.remove('pose-active');
+      document.body.dataset.poseActive = 'false';
+      activePoseKey = '';
+    }
+    return;
+  }
+  if (poseKey === activePoseKey) return;
+  const incoming = activePoseLayer === poseLayer ? poseLayerAlt : poseLayer;
+  const outgoing = activePoseLayer;
+  if (!incoming || !outgoing) return;
+  incoming.src = src;
+  incoming.dataset.pose = poseKey;
+  incoming.classList.add('pose-active');
+  outgoing.classList.remove('pose-active');
+  activePoseLayer = incoming;
+  activePoseKey = poseKey;
+  document.body.dataset.poseActive = 'true';
+  clearGesture();
+  window.petLive2d?.stopTrack?.();
 }
 function runChain(name) {
   while (chainTimers.length) clearTimeout(chainTimers.pop());

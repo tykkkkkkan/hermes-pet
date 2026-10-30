@@ -245,6 +245,17 @@ async function main() {
     check('六态状态立绘全部加载', layers?.length >= 6 && broken.length === 0,
       `${layers?.length} 张（${layers?.map((l) => l.key).join('/')}），坏 ${broken.map((b) => b.src).join(',') || '无'}`);
 
+    const poses = await evaluate(cdp, `(() => {
+      const sources = { ...window.pet.poseSources };
+      return Promise.all(Object.entries(sources).map(([key, src]) => new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => resolve({ key, ok: img.naturalWidth > 0 });
+        img.onerror = () => resolve({ key, ok: false });
+        img.src = src;
+      })));
+    })()`);
+    check('七张行为姿态素材全部加载', poses?.length === 7 && poses.every((pose) => pose.ok), JSON.stringify(poses));
+
     // ---- 5. 热区命中真实坐标 ----
     const hit = await evaluate(cdp, `(() => {
       const regions = window.pet?.regions || {};
